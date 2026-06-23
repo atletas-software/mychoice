@@ -460,8 +460,10 @@ code {
 .prompt-empty {
   display: grid;
   min-height: 100%;
-  place-items: start center;
+  align-content: start;
+  justify-items: center;
   padding-top: clamp(64px, 12vh, 132px);
+  padding-inline: clamp(22px, 4vw, 48px);
 }
 
 .start-requirement {
@@ -474,6 +476,87 @@ code {
 
 .start-requirement[data-state="error"] {
   color: #ffd1cc;
+}
+
+.recordings-panel {
+  display: grid;
+  gap: 18px;
+  width: min(100%, 620px);
+  margin-top: 42px;
+  padding: 24px;
+  background: rgba(11, 26, 38, 0.62);
+  border: 1px solid #294158;
+  border-radius: 8px;
+}
+
+.recordings-head {
+  display: grid;
+  gap: 6px;
+}
+
+.recordings-head span {
+  color: #aebdce;
+  font-size: 0.78rem;
+  font-weight: 850;
+  text-transform: uppercase;
+}
+
+.recordings-head h2 {
+  margin: 0;
+  color: #e8f0fb;
+  font-size: 1.35rem;
+  line-height: 1.15;
+}
+
+.recordings-list {
+  display: grid;
+  gap: 10px;
+}
+
+.recordings-empty {
+  margin: 0;
+  color: #88a0b7;
+  font-weight: 720;
+}
+
+.recordings-empty.error {
+  color: #ffd1cc;
+}
+
+.recording-item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 14px;
+  align-items: center;
+  min-height: 74px;
+  padding: 14px 16px;
+  background: #14283a;
+  border: 1px solid #2b4054;
+  border-radius: 8px;
+}
+
+.recording-item div {
+  display: grid;
+  gap: 5px;
+}
+
+.recording-item div:last-child {
+  justify-items: end;
+}
+
+.recording-item strong {
+  color: #e8f0fb;
+}
+
+.recording-item span {
+  color: #88a0b7;
+  font-size: 0.9rem;
+  font-weight: 720;
+}
+
+.recording-status {
+  color: #ffffff !important;
+  text-transform: capitalize;
 }
 
 .workspace-section {

@@ -40,6 +40,8 @@ const aiPathOverview = document.querySelector("#aiPathOverview");
 const aiPathSkills = document.querySelector("#aiPathSkills");
 const aiPathActions = document.querySelector("#aiPathActions");
 const bootcampTools = document.querySelector("#bootcampTools");
+const recordingsList = document.querySelector("#recordingsList");
+const recordingsStatus = document.querySelector("#recordingsStatus");
 
 let activeConversationId = "";
 let dailyCall = null;
@@ -102,6 +104,7 @@ async function initializeApp() {
   if (currentUser) {
     showHome(currentUser);
     populateProfileForm(currentUser);
+    loadInterviewHistory();
 
     if (new URLSearchParams(window.location.search).get("previewInterview") === "1") {
       showInterviewConsole();
@@ -181,6 +184,7 @@ async function handleGoogleCredential(response) {
     localStorage.removeItem("interviewMePreviewUser");
     showHome(currentUser);
     populateProfileForm(currentUser);
+    loadInterviewHistory();
   } catch (error) {
     configNote.textContent =
       error instanceof Error ? error.message : "Google sign-in failed. Please try again.";
@@ -212,6 +216,10 @@ function showWorkspaceSection(sectionName) {
 
   if (sectionName === "training") {
     loadAiTrainingPath();
+  }
+
+  if (sectionName === "interview") {
+    loadInterviewHistory();
   }
 }
 
@@ -326,6 +334,7 @@ async function startInterview() {
     }
 
     activeConversationId = data.conversation_id;
+    loadInterviewHistory();
     await joinDailyRoom(data.conversation_url);
     setInterviewStatus("", false);
   } catch (error) {
@@ -362,9 +371,109 @@ async function endActiveInterview() {
     await fetch(`/api/tavus/conversations/${encodeURIComponent(conversationId)}/end`, {
       method: "POST"
     });
+    loadInterviewHistory();
   } catch {
     setInterviewStatus("Interview closed locally. Tavus cleanup may need a retry.", true);
   }
+}
+
+async function loadInterviewHistory() {
+  if (!recordingsList || !currentUser) {
+    return;
+  }
+
+  recordingsList.replaceChildren();
+  const loading = document.createElement("p");
+  loading.className = "recordings-empty";
+  loading.textContent = "Loading previous interviews...";
+  recordingsList.append(loading);
+
+  try {
+    const response = await fetch("/api/interviews");
+    const data = await response.json().catch(() => ({}));
+
+    if (!response.ok) {
+      throw new Error(data.error || "Unable to load previous interviews.");
+    }
+
+    renderInterviewHistory(data.interviews || []);
+  } catch (error) {
+    recordingsList.replaceChildren();
+    const message = document.createElement("p");
+    message.className = "recordings-empty error";
+    message.textContent = error instanceof Error ? error.message : "Unable to load previous interviews.";
+    recordingsList.append(message);
+  }
+}
+
+function renderInterviewHistory(interviews) {
+  if (!recordingsList) {
+    return;
+  }
+
+  recordingsList.replaceChildren();
+
+  if (!interviews.length) {
+    const empty = document.createElement("p");
+    empty.className = "recordings-empty";
+    empty.textContent = "No previous recordings yet. Start your first interview to create one.";
+    recordingsList.append(empty);
+    return;
+  }
+
+  recordingsList.replaceChildren(
+    ...interviews.map((interview) => {
+      const item = document.createElement("article");
+      item.className = "recording-item";
+      const date = interview.startedAt || interview.createdAt;
+      const transcriptLabel =
+        interview.transcriptCount === 1
+          ? "1 transcript turn"
+          : `${interview.transcriptCount || 0} transcript turns`;
+
+      item.innerHTML = `
+        <div>
+          <strong>${escapeHtml(formatInterviewDate(date))}</strong>
+          <span>${escapeHtml(interview.domain || "No domain")}</span>
+        </div>
+        <div>
+          <span class="recording-status">${escapeHtml(interview.status || "unknown")}</span>
+          <span>${escapeHtml(transcriptLabel)}</span>
+        </div>
+      `;
+
+      return item;
+    })
+  );
+}
+
+function formatInterviewDate(value) {
+  if (!value) {
+    return "Interview";
+  }
+
+  const date = new Date(value);
+
+  if (Number.isNaN(date.getTime())) {
+    return value;
+  }
+
+  return date.toLocaleString([], {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+    hour: "numeric",
+    minute: "2-digit"
+  });
+}
+
+function escapeHtml(value) {
+  return String(value || "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#039;");
 }
 
 function resetInterviewFrame() {

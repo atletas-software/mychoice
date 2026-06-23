@@ -13,7 +13,7 @@ const googleClientId = process.env.GOOGLE_CLIENT_ID || "";
 const publicCallbackBaseUrl = cleanEnvValue(process.env.PUBLIC_CALLBACK_BASE_URL || "");
 const publicDir = __dirname;
 const databasePath = path.join(__dirname, "data", "interview-me.sqlite");
-const db = openDatabase(databasePath);
+let db;
 
 const mimeTypes = {
   ".css": "text/css; charset=utf-8",
@@ -38,18 +38,23 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (req.method === "GET" && url.pathname === "/api/session") {
-      sendJson(res, 200, { user: getSessionUser(req) });
+      sendJson(res, 200, { user: await getSessionUser(req) });
       return;
     }
 
     if (req.method === "GET" && url.pathname === "/api/profile") {
-      const user = getSessionUser(req);
+      const user = await getSessionUser(req);
       sendJson(res, user ? 200 : 401, user ? { user } : { error: "Sign in to view profile." });
       return;
     }
 
     if (req.method === "GET" && url.pathname === "/api/ai-training/path") {
-      getAiTrainingPath(req, res);
+      await getAiTrainingPath(req, res);
+      return;
+    }
+
+    if (req.method === "GET" && url.pathname === "/api/interviews") {
+      await listUserInterviews(req, res);
       return;
     }
 
@@ -64,7 +69,7 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (req.method === "POST" && url.pathname === "/api/auth/logout") {
-      logoutUser(req, res);
+      await logoutUser(req, res);
       return;
     }
 
@@ -102,12 +107,15 @@ const server = http.createServer(async (req, res) => {
   }
 });
 
-server.listen(port, host, () => {
-  console.log(`Interview Me app listening on http://${host}:${port}`);
-});
+async function bootstrap() {
+  db = await openDatabase(databasePath);
+  server.listen(port, host, () => {
+    console.log(`Interview Me app listening on http://${host}:${port}`);
+  });
+}
 
 async function createTavusConversation(req, res) {
-  const sessionUser = getSessionUser(req);
+  const sessionUser = await getSessionUser(req);
 
   if (!sessionUser) {
     sendJson(res, 401, { error: "Sign in before starting an interview." });
@@ -149,12 +157,12 @@ async function createTavusConversation(req, res) {
     return;
   }
 
-  const localSession = db.prepare(`
+  const localSession = await db.run(`
     INSERT INTO interview_sessions (
       user_id, domain, status, persona_id, replica_id, profile_snapshot_json, started_at, created_at, updated_at
     )
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(
+  `, [
     sessionUser.id,
     sessionUser.domain,
     "creating",
@@ -164,7 +172,7 @@ async function createTavusConversation(req, res) {
     now,
     now,
     now
-  );
+  ]);
 
   const localSessionId = Number(localSession.lastInsertRowid);
   const callbackUrl = publicCallbackBaseUrl
@@ -192,7 +200,7 @@ async function createTavusConversation(req, res) {
   const data = await tavusResponse.json().catch(() => ({}));
 
   if (!tavusResponse.ok) {
-    markInterviewSession(localSessionId, {
+    await markInterviewSession(localSessionId, {
       status: "failed",
       metadata: { tavus_error: data }
     });
@@ -200,7 +208,7 @@ async function createTavusConversation(req, res) {
     return;
   }
 
-  markInterviewSession(localSessionId, {
+  await markInterviewSession(localSessionId, {
     status: "active",
     tavusConversationId: data.conversation_id,
     metadata: {
@@ -217,17 +225,60 @@ async function createTavusConversation(req, res) {
   });
 }
 
-function getAiTrainingPath(req, res) {
-  const sessionUser = getSessionUser(req);
+async function getAiTrainingPath(req, res) {
+  const sessionUser = await getSessionUser(req);
 
   if (!sessionUser) {
     sendJson(res, 401, { error: "Sign in to generate your AI path." });
     return;
   }
 
-  const transcripts = getUserTranscriptContext(sessionUser.id);
+  const transcripts = await getUserTranscriptContext(sessionUser.id);
   const path = generateAiTrainingPath(sessionUser, transcripts);
   sendJson(res, 200, { path });
+}
+
+async function listUserInterviews(req, res) {
+  const sessionUser = await getSessionUser(req);
+
+  if (!sessionUser) {
+    sendJson(res, 401, { error: "Sign in to view recordings." });
+    return;
+  }
+
+  const interviews = await db.all(`
+    SELECT i.id,
+           i.domain,
+           i.status,
+           i.tavus_conversation_id,
+           i.started_at,
+           i.ended_at,
+           i.created_at,
+           i.updated_at,
+           COUNT(t.id) AS transcript_count,
+           MAX(t.created_at) AS last_transcript_at
+    FROM interview_sessions i
+    LEFT JOIN conversation_transcripts t ON t.session_id = i.id
+    WHERE i.user_id = ?
+    GROUP BY i.id, i.domain, i.status, i.tavus_conversation_id, i.started_at, i.ended_at, i.created_at, i.updated_at
+    ORDER BY COALESCE(i.started_at, i.created_at) DESC
+    LIMIT 25
+  `, [sessionUser.id]);
+
+  sendJson(res, 200, {
+    interviews: interviews.map((interview) => ({
+      id: interview.id,
+      domain: interview.domain || "",
+      status: interview.status || "",
+      tavusConversationId: interview.tavus_conversation_id || "",
+      startedAt: interview.started_at || "",
+      endedAt: interview.ended_at || "",
+      createdAt: interview.created_at || "",
+      updatedAt: interview.updated_at || "",
+      transcriptCount: Number(interview.transcript_count || 0),
+      lastTranscriptAt: interview.last_transcript_at || ""
+    }))
+  });
 }
 
 async function handleTavusCallback(req, res) {
@@ -235,7 +286,7 @@ async function handleTavusCallback(req, res) {
   const eventType = cleanValue(payload.event_type);
   const conversationId = cleanValue(payload.conversation_id);
   const timestamp = cleanValue(payload.timestamp) || new Date().toISOString();
-  const session = conversationId ? getInterviewSessionByConversationId(conversationId) : null;
+  const session = conversationId ? await getInterviewSessionByConversationId(conversationId) : null;
 
   if (!session) {
     sendJson(res, 202, { ok: true, stored: false, reason: "Unknown conversation_id" });
@@ -247,9 +298,9 @@ async function handleTavusCallback(req, res) {
       ? payload.properties.transcript
       : [];
 
-    storeTranscriptTurns(session.id, transcript, payload);
-    storeStructuredOutput(session.id, session.domain, transcript);
-    markInterviewSession(session.id, {
+    await storeTranscriptTurns(session.id, transcript, payload);
+    await storeStructuredOutput(session.id, session.domain, transcript);
+    await markInterviewSession(session.id, {
       status: "transcribed",
       endedAt: timestamp,
       metadata: { last_callback: payload }
@@ -260,8 +311,8 @@ async function handleTavusCallback(req, res) {
   }
 
   if (isUtteranceEvent(eventType)) {
-    const stored = storeUtteranceEvent(session.id, payload);
-    markInterviewSession(session.id, {
+    const stored = await storeUtteranceEvent(session.id, payload);
+    await markInterviewSession(session.id, {
       status: "active",
       metadata: { last_utterance_event: payload }
     });
@@ -271,7 +322,7 @@ async function handleTavusCallback(req, res) {
   }
 
   if (eventType === "system.shutdown") {
-    markInterviewSession(session.id, {
+    await markInterviewSession(session.id, {
       status: "ended",
       endedAt: timestamp,
       metadata: { last_callback: payload }
@@ -284,15 +335,15 @@ async function handleTavusCallback(req, res) {
 async function handleTavusUtterance(req, res) {
   const payload = await readJsonBody(req);
   const conversationId = cleanValue(payload.conversation_id);
-  const session = conversationId ? getInterviewSessionByConversationId(conversationId) : null;
+  const session = conversationId ? await getInterviewSessionByConversationId(conversationId) : null;
 
   if (!session) {
     sendJson(res, 202, { ok: true, stored: false, reason: "Unknown conversation_id" });
     return;
   }
 
-  const stored = storeUtteranceEvent(session.id, payload);
-  markInterviewSession(session.id, {
+  const stored = await storeUtteranceEvent(session.id, payload);
+  await markInterviewSession(session.id, {
     status: "active",
     metadata: { last_utterance_event: payload }
   });
@@ -318,51 +369,39 @@ async function authenticateGoogleUser(req, res) {
   const profile = await verifyGoogleCredential(credential);
   const now = new Date().toISOString();
 
-  db.prepare(`
-    INSERT INTO users (google_sub, email, name, picture, email_verified, created_at, updated_at, last_login_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    ON CONFLICT(google_sub) DO UPDATE SET
-      email = excluded.email,
-      name = excluded.name,
-      picture = excluded.picture,
-      email_verified = excluded.email_verified,
-      updated_at = excluded.updated_at,
-      last_login_at = excluded.last_login_at
-  `).run(
-    profile.sub,
-    profile.email,
-    profile.name,
-    profile.picture,
-    profile.email_verified === "true" ? 1 : 0,
-    now,
-    now,
+  await db.upsertAuthenticatedUser({
+    googleSub: profile.sub,
+    email: profile.email,
+    name: profile.name,
+    picture: profile.picture,
+    emailVerified: profile.email_verified === "true" ? 1 : 0,
     now
-  );
+  });
 
-  const user = db.prepare(`
+  const user = await db.get(`
     SELECT id, google_sub, email, name, first_name, last_name, linkedin, domain,
            picture, email_verified, created_at, updated_at, last_login_at
     FROM users
     WHERE google_sub = ?
-  `).get(profile.sub);
+  `, [profile.sub]);
 
   const token = crypto.randomBytes(32).toString("base64url");
   const expiresAt = new Date(Date.now() + 1000 * 60 * 60 * 24 * 7).toISOString();
 
-  db.prepare(`
+  await db.run(`
     INSERT INTO sessions (session_token, user_id, created_at, expires_at)
     VALUES (?, ?, ?, ?)
-  `).run(token, user.id, now, expiresAt);
+  `, [token, user.id, now, expiresAt]);
 
   res.setHeader("Set-Cookie", buildSessionCookie(token, expiresAt));
   sendJson(res, 200, { user: serializeUser(user) });
 }
 
-function logoutUser(req, res) {
+async function logoutUser(req, res) {
   const token = getSessionToken(req);
 
   if (token) {
-    db.prepare("DELETE FROM sessions WHERE session_token = ?").run(token);
+    await db.run("DELETE FROM sessions WHERE session_token = ?", [token]);
   }
 
   res.setHeader(
@@ -373,7 +412,7 @@ function logoutUser(req, res) {
 }
 
 async function updateProfile(req, res) {
-  const sessionUser = getSessionUser(req);
+  const sessionUser = await getSessionUser(req);
 
   if (!sessionUser) {
     sendJson(res, 401, { error: "Sign in to update profile." });
@@ -399,7 +438,7 @@ async function updateProfile(req, res) {
     return;
   }
 
-  db.prepare(`
+  await db.run(`
     UPDATE users
     SET first_name = ?,
         last_name = ?,
@@ -413,7 +452,7 @@ async function updateProfile(req, res) {
         resume_uploaded_at = COALESCE(?, resume_uploaded_at),
         updated_at = ?
     WHERE id = ?
-  `).run(
+  `, [
     firstName,
     lastName,
     cleanValue(body.linkedIn),
@@ -426,9 +465,9 @@ async function updateProfile(req, res) {
     resume ? now : null,
     now,
     sessionUser.id
-  );
+  ]);
 
-  upsertPersonalContext(sessionUser.id, {
+  await upsertPersonalContext(sessionUser.id, {
     linkedIn: cleanValue(body.linkedIn),
     domain,
     personalContext: cleanValue(body.personalContext),
@@ -437,7 +476,7 @@ async function updateProfile(req, res) {
     updatedAt: now
   });
 
-  const user = getUserById(sessionUser.id);
+  const user = await getUserById(sessionUser.id);
   sendJson(res, 200, { user });
 }
 
@@ -600,15 +639,15 @@ function hasInterviewProfile(user) {
   return Boolean(cleanValue(user?.linkedIn) && cleanValue(user?.domain) && cleanValue(user?.resumeFileName));
 }
 
-function getUserTranscriptContext(userId) {
-  return db.prepare(`
+async function getUserTranscriptContext(userId) {
+  return db.all(`
     SELECT t.speaker, t.speaker_role, t.text, t.created_at, i.domain, i.tavus_conversation_id
     FROM conversation_transcripts t
     JOIN interview_sessions i ON i.id = t.session_id
     WHERE i.user_id = ?
     ORDER BY t.created_at ASC, t.id ASC
     LIMIT 80
-  `).all(userId);
+  `, [userId]);
 }
 
 function generateAiTrainingPath(user, transcripts) {
@@ -828,23 +867,23 @@ function getDomainTrainingTrack(domain, contextSignals) {
   };
 }
 
-function getInterviewSessionByConversationId(conversationId) {
-  return db.prepare(`
+async function getInterviewSessionByConversationId(conversationId) {
+  return db.get(`
     SELECT id, user_id, domain, status, tavus_conversation_id
     FROM interview_sessions
     WHERE tavus_conversation_id = ?
-  `).get(conversationId);
+  `, [conversationId]);
 }
 
-function markInterviewSession(sessionId, updates) {
-  const existing = db.prepare("SELECT metadata_json FROM interview_sessions WHERE id = ?").get(sessionId);
+async function markInterviewSession(sessionId, updates) {
+  const existing = await db.get("SELECT metadata_json FROM interview_sessions WHERE id = ?", [sessionId]);
   const existingMetadata = parseJson(existing?.metadata_json, {});
   const metadata = updates.metadata
     ? JSON.stringify({ ...existingMetadata, ...updates.metadata })
     : JSON.stringify(existingMetadata);
   const now = new Date().toISOString();
 
-  db.prepare(`
+  await db.run(`
     UPDATE interview_sessions
     SET status = COALESCE(?, status),
         tavus_conversation_id = COALESCE(?, tavus_conversation_id),
@@ -852,14 +891,14 @@ function markInterviewSession(sessionId, updates) {
         metadata_json = ?,
         updated_at = ?
     WHERE id = ?
-  `).run(
+  `, [
     updates.status || null,
     updates.tavusConversationId || null,
     updates.endedAt || null,
     metadata,
     now,
     sessionId
-  );
+  ]);
 }
 
 function isUtteranceEvent(eventType) {
@@ -871,33 +910,33 @@ function isUtteranceEvent(eventType) {
   ].includes(eventType);
 }
 
-function storeUtteranceEvent(sessionId, payload) {
+async function storeUtteranceEvent(sessionId, payload) {
   const turn = normalizeUtterancePayload(payload);
 
   if (!turn.text) {
     return false;
   }
 
-  insertTranscriptTurn(sessionId, turn);
+  await insertTranscriptTurn(sessionId, turn);
   return true;
 }
 
-function storeTranscriptTurns(sessionId, transcript, sourcePayload) {
-  transcript.forEach((entry, index) => {
-    insertTranscriptTurn(sessionId, normalizeTranscriptEntry(entry, index, sourcePayload));
-  });
+async function storeTranscriptTurns(sessionId, transcript, sourcePayload) {
+  for (const [index, entry] of transcript.entries()) {
+    await insertTranscriptTurn(sessionId, normalizeTranscriptEntry(entry, index, sourcePayload));
+  }
 }
 
-function insertTranscriptTurn(sessionId, turn) {
+async function insertTranscriptTurn(sessionId, turn) {
   const now = new Date().toISOString();
 
-  db.prepare(`
+  await db.run(`
     INSERT INTO conversation_transcripts (
       session_id, speaker, speaker_role, turn_index, text, started_at, ended_at,
       tavus_event_id, source_event_type, metadata_json, created_at
     )
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(
+  `, [
     sessionId,
     turn.speaker,
     turn.speakerRole,
@@ -909,7 +948,7 @@ function insertTranscriptTurn(sessionId, turn) {
     turn.eventType,
     JSON.stringify(turn.metadata || {}),
     now
-  );
+  ]);
 }
 
 function normalizeUtterancePayload(payload) {
@@ -946,23 +985,14 @@ function normalizeTranscriptEntry(entry, index, sourcePayload) {
   };
 }
 
-function storeStructuredOutput(sessionId, domain, transcript) {
+async function storeStructuredOutput(sessionId, domain, transcript) {
   const normalizedTranscript = transcript.map((entry, index) => normalizeTranscriptEntry(entry, index, {
     event_type: "application.transcription_ready"
   }));
   const structured = buildStructuredDomainOutput(domain, normalizedTranscript);
   const now = new Date().toISOString();
 
-  db.prepare(`
-    INSERT INTO structured_interview_outputs (
-      session_id, domain, schema_version, structured_json, confidence_json, created_at, updated_at
-    )
-    VALUES (?, ?, ?, ?, ?, ?, ?)
-    ON CONFLICT(session_id, domain, schema_version) DO UPDATE SET
-      structured_json = excluded.structured_json,
-      confidence_json = excluded.confidence_json,
-      updated_at = excluded.updated_at
-  `).run(
+  await db.upsertStructuredOutput(
     sessionId,
     domain || "Unknown",
     getDomainSchemaVersion(domain),
@@ -1099,14 +1129,14 @@ async function verifyGoogleCredential(credential) {
   return profile;
 }
 
-function getSessionUser(req) {
+async function getSessionUser(req) {
   const token = getSessionToken(req);
 
   if (!token) {
     return null;
   }
 
-  const user = db.prepare(`
+  const user = await db.get(`
     SELECT users.id, users.google_sub, users.email, users.name, users.first_name,
            users.last_name, users.linkedin, users.domain, users.picture,
            users.resume_file_name, users.resume_mime_type, users.resume_size_bytes,
@@ -1118,13 +1148,13 @@ function getSessionUser(req) {
     JOIN users ON users.id = sessions.user_id
     LEFT JOIN personal_contexts ON personal_contexts.user_id = users.id
     WHERE sessions.session_token = ? AND sessions.expires_at > ?
-  `).get(token, new Date().toISOString());
+  `, [token, new Date().toISOString()]);
 
   return user ? serializeUser(user) : null;
 }
 
-function getUserById(userId) {
-  const user = db.prepare(`
+async function getUserById(userId) {
+  const user = await db.get(`
     SELECT users.id, users.google_sub, users.email, users.name, users.first_name,
            users.last_name, users.linkedin, users.domain, users.picture,
            users.resume_file_name, users.resume_mime_type, users.resume_size_bytes,
@@ -1135,7 +1165,7 @@ function getUserById(userId) {
     FROM users
     LEFT JOIN personal_contexts ON personal_contexts.user_id = users.id
     WHERE users.id = ?
-  `).get(userId);
+  `, [userId]);
 
   return user ? serializeUser(user) : null;
 }
@@ -1190,9 +1220,22 @@ function serializeUser(user) {
   };
 }
 
-function openDatabase(filePath) {
+async function openDatabase(filePath) {
+  if (hasMySqlConfig()) {
+    return openMySqlDatabase();
+  }
+
+  return openSqliteDatabase(filePath);
+}
+
+function hasMySqlConfig() {
+  return Boolean(process.env.DATABASE_URL || process.env.MYSQL_HOST);
+}
+
+function openSqliteDatabase(filePath) {
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
   const database = new DatabaseSync(filePath);
+  const adapter = new SqliteAdapter(database);
   database.exec(`
     PRAGMA journal_mode = WAL;
     PRAGMA foreign_keys = ON;
@@ -1311,10 +1354,36 @@ function openDatabase(filePath) {
   ensureColumn(database, "users", "resume_text", "TEXT");
   ensureColumn(database, "users", "resume_uploaded_at", "TEXT");
   ensureColumn(database, "personal_contexts", "future_direction", "TEXT");
-  return database;
+  return adapter;
 }
 
-function upsertPersonalContext(userId, context) {
+async function openMySqlDatabase() {
+  let mysql;
+
+  try {
+    mysql = require("mysql2/promise");
+  } catch (error) {
+    throw new Error("MySQL is configured, but the mysql2 package is not installed. Run npm install before deploying.");
+  }
+
+  const pool = process.env.DATABASE_URL
+    ? mysql.createPool(process.env.DATABASE_URL)
+    : mysql.createPool({
+        host: process.env.MYSQL_HOST,
+        port: Number(process.env.MYSQL_PORT || 3306),
+        user: process.env.MYSQL_USER,
+        password: process.env.MYSQL_PASSWORD,
+        database: process.env.MYSQL_DATABASE,
+        waitForConnections: true,
+        connectionLimit: Number(process.env.MYSQL_CONNECTION_LIMIT || 10),
+        namedPlaceholders: false
+      });
+  const adapter = new MySqlAdapter(pool);
+  await adapter.migrate();
+  return adapter;
+}
+
+async function upsertPersonalContext(userId, context) {
   const now = context.updatedAt || new Date().toISOString();
   const source = JSON.stringify({
     linkedIn: context.linkedIn,
@@ -1326,19 +1395,7 @@ function upsertPersonalContext(userId, context) {
     source: "profile"
   });
 
-  db.prepare(`
-    INSERT INTO personal_contexts (
-      user_id, linkedin_url, domain, context_text, future_direction, source_json, created_at, updated_at
-    )
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    ON CONFLICT(user_id) DO UPDATE SET
-      linkedin_url = excluded.linkedin_url,
-      domain = excluded.domain,
-      context_text = excluded.context_text,
-      future_direction = excluded.future_direction,
-      source_json = excluded.source_json,
-      updated_at = excluded.updated_at
-  `).run(
+  await db.upsertPersonalContext(
     userId,
     context.linkedIn,
     context.domain,
@@ -1359,9 +1416,267 @@ function ensureColumn(database, tableName, columnName, columnType) {
   }
 }
 
+class SqliteAdapter {
+  constructor(database) {
+    this.database = database;
+    this.kind = "sqlite";
+  }
+
+  run(sql, params = []) {
+    const result = this.database.prepare(sql).run(...params);
+    return {
+      changes: result.changes,
+      lastInsertRowid: Number(result.lastInsertRowid || 0)
+    };
+  }
+
+  get(sql, params = []) {
+    return this.database.prepare(sql).get(...params);
+  }
+
+  all(sql, params = []) {
+    return this.database.prepare(sql).all(...params);
+  }
+
+  upsertAuthenticatedUser(user) {
+    return this.run(`
+      INSERT INTO users (google_sub, email, name, picture, email_verified, created_at, updated_at, last_login_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(google_sub) DO UPDATE SET
+        email = excluded.email,
+        name = excluded.name,
+        picture = excluded.picture,
+        email_verified = excluded.email_verified,
+        updated_at = excluded.updated_at,
+        last_login_at = excluded.last_login_at
+    `, [
+      user.googleSub,
+      user.email,
+      user.name,
+      user.picture,
+      user.emailVerified,
+      user.now,
+      user.now,
+      user.now
+    ]);
+  }
+
+  upsertPersonalContext(userId, linkedIn, domain, contextText, futureDirection, source, createdAt, updatedAt) {
+    return this.run(`
+      INSERT INTO personal_contexts (
+        user_id, linkedin_url, domain, context_text, future_direction, source_json, created_at, updated_at
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(user_id) DO UPDATE SET
+        linkedin_url = excluded.linkedin_url,
+        domain = excluded.domain,
+        context_text = excluded.context_text,
+        future_direction = excluded.future_direction,
+        source_json = excluded.source_json,
+        updated_at = excluded.updated_at
+    `, [userId, linkedIn, domain, contextText, futureDirection, source, createdAt, updatedAt]);
+  }
+
+  upsertStructuredOutput(sessionId, domain, schemaVersion, structuredJson, confidenceJson, createdAt, updatedAt) {
+    return this.run(`
+      INSERT INTO structured_interview_outputs (
+        session_id, domain, schema_version, structured_json, confidence_json, created_at, updated_at
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(session_id, domain, schema_version) DO UPDATE SET
+        structured_json = excluded.structured_json,
+        confidence_json = excluded.confidence_json,
+        updated_at = excluded.updated_at
+    `, [sessionId, domain, schemaVersion, structuredJson, confidenceJson, createdAt, updatedAt]);
+  }
+}
+
+class MySqlAdapter {
+  constructor(pool) {
+    this.pool = pool;
+    this.kind = "mysql";
+  }
+
+  async run(sql, params = []) {
+    const [result] = await this.pool.execute(sql, params);
+    return {
+      changes: result.affectedRows || 0,
+      lastInsertRowid: result.insertId || 0
+    };
+  }
+
+  async get(sql, params = []) {
+    const [rows] = await this.pool.execute(sql, params);
+    return rows[0] || null;
+  }
+
+  async all(sql, params = []) {
+    const [rows] = await this.pool.execute(sql, params);
+    return rows;
+  }
+
+  async migrate() {
+    const statements = [
+      `CREATE TABLE IF NOT EXISTS users (
+        id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+        google_sub VARCHAR(255) NOT NULL UNIQUE,
+        email VARCHAR(320) NOT NULL,
+        name VARCHAR(255) NOT NULL,
+        first_name VARCHAR(255),
+        last_name VARCHAR(255),
+        linkedin TEXT,
+        domain VARCHAR(120),
+        resume_file_name TEXT,
+        resume_mime_type VARCHAR(255),
+        resume_size_bytes INT,
+        resume_content_base64 LONGTEXT,
+        resume_text LONGTEXT,
+        resume_uploaded_at VARCHAR(40),
+        picture TEXT,
+        email_verified TINYINT NOT NULL DEFAULT 0,
+        created_at VARCHAR(40) NOT NULL,
+        updated_at VARCHAR(40) NOT NULL,
+        last_login_at VARCHAR(40),
+        INDEX idx_users_email (email)
+      )`,
+      `CREATE TABLE IF NOT EXISTS sessions (
+        id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+        session_token VARCHAR(255) NOT NULL UNIQUE,
+        user_id INT NOT NULL,
+        created_at VARCHAR(40) NOT NULL,
+        expires_at VARCHAR(40) NOT NULL,
+        INDEX idx_sessions_token (session_token),
+        INDEX idx_sessions_expires_at (expires_at),
+        CONSTRAINT fk_sessions_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+      )`,
+      `CREATE TABLE IF NOT EXISTS personal_contexts (
+        id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+        user_id INT NOT NULL UNIQUE,
+        linkedin_url TEXT,
+        domain VARCHAR(120),
+        context_text LONGTEXT,
+        future_direction LONGTEXT,
+        source_json LONGTEXT,
+        created_at VARCHAR(40) NOT NULL,
+        updated_at VARCHAR(40) NOT NULL,
+        CONSTRAINT fk_personal_contexts_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+      )`,
+      `CREATE TABLE IF NOT EXISTS interview_sessions (
+        id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+        user_id INT NOT NULL,
+        domain VARCHAR(120),
+        status VARCHAR(80) NOT NULL,
+        tavus_conversation_id VARCHAR(255) UNIQUE,
+        persona_id VARCHAR(255),
+        replica_id VARCHAR(255),
+        profile_snapshot_json LONGTEXT,
+        summary LONGTEXT,
+        metadata_json LONGTEXT,
+        started_at VARCHAR(40),
+        ended_at VARCHAR(40),
+        created_at VARCHAR(40) NOT NULL,
+        updated_at VARCHAR(40) NOT NULL,
+        INDEX idx_interview_sessions_user_id (user_id),
+        INDEX idx_interview_sessions_conversation_id (tavus_conversation_id),
+        CONSTRAINT fk_interview_sessions_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+      )`,
+      `CREATE TABLE IF NOT EXISTS conversation_transcripts (
+        id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+        session_id INT NOT NULL,
+        speaker VARCHAR(255) NOT NULL,
+        speaker_role VARCHAR(255),
+        turn_index INT,
+        text LONGTEXT NOT NULL,
+        started_at VARCHAR(40),
+        ended_at VARCHAR(40),
+        tavus_event_id VARCHAR(255),
+        source_event_type VARCHAR(255),
+        metadata_json LONGTEXT,
+        created_at VARCHAR(40) NOT NULL,
+        INDEX idx_conversation_transcripts_session_id (session_id),
+        CONSTRAINT fk_conversation_transcripts_session FOREIGN KEY (session_id) REFERENCES interview_sessions(id) ON DELETE CASCADE
+      )`,
+      `CREATE TABLE IF NOT EXISTS structured_interview_outputs (
+        id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+        session_id INT NOT NULL,
+        domain VARCHAR(120) NOT NULL,
+        schema_version VARCHAR(120) NOT NULL,
+        structured_json LONGTEXT NOT NULL,
+        confidence_json LONGTEXT,
+        created_at VARCHAR(40) NOT NULL,
+        updated_at VARCHAR(40) NOT NULL,
+        UNIQUE KEY unique_structured_output (session_id, domain, schema_version),
+        INDEX idx_structured_outputs_session_id (session_id),
+        CONSTRAINT fk_structured_outputs_session FOREIGN KEY (session_id) REFERENCES interview_sessions(id) ON DELETE CASCADE
+      )`
+    ];
+
+    for (const statement of statements) {
+      await this.pool.execute(statement);
+    }
+  }
+
+  upsertAuthenticatedUser(user) {
+    return this.run(`
+      INSERT INTO users (google_sub, email, name, picture, email_verified, created_at, updated_at, last_login_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      ON DUPLICATE KEY UPDATE
+        email = VALUES(email),
+        name = VALUES(name),
+        picture = VALUES(picture),
+        email_verified = VALUES(email_verified),
+        updated_at = VALUES(updated_at),
+        last_login_at = VALUES(last_login_at)
+    `, [
+      user.googleSub,
+      user.email,
+      user.name,
+      user.picture,
+      user.emailVerified,
+      user.now,
+      user.now,
+      user.now
+    ]);
+  }
+
+  upsertPersonalContext(userId, linkedIn, domain, contextText, futureDirection, source, createdAt, updatedAt) {
+    return this.run(`
+      INSERT INTO personal_contexts (
+        user_id, linkedin_url, domain, context_text, future_direction, source_json, created_at, updated_at
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      ON DUPLICATE KEY UPDATE
+        linkedin_url = VALUES(linkedin_url),
+        domain = VALUES(domain),
+        context_text = VALUES(context_text),
+        future_direction = VALUES(future_direction),
+        source_json = VALUES(source_json),
+        updated_at = VALUES(updated_at)
+    `, [userId, linkedIn, domain, contextText, futureDirection, source, createdAt, updatedAt]);
+  }
+
+  upsertStructuredOutput(sessionId, domain, schemaVersion, structuredJson, confidenceJson, createdAt, updatedAt) {
+    return this.run(`
+      INSERT INTO structured_interview_outputs (
+        session_id, domain, schema_version, structured_json, confidence_json, created_at, updated_at
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+      ON DUPLICATE KEY UPDATE
+        structured_json = VALUES(structured_json),
+        confidence_json = VALUES(confidence_json),
+        updated_at = VALUES(updated_at)
+    `, [sessionId, domain, schemaVersion, structuredJson, confidenceJson, createdAt, updatedAt]);
+  }
+}
+
 function cleanEnvValue(value) {
   return typeof value === "string" ? value.trim() : "";
 }
+
+bootstrap().catch((error) => {
+  console.error(error);
+  process.exitCode = 1;
+});
 
 function loadEnvFile(envPath) {
   if (!fs.existsSync(envPath)) {
