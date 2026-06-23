@@ -1,0 +1,362 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>My Choice</title>
+    <link rel="stylesheet" href="./styles.css" />
+    <script src="https://accounts.google.com/gsi/client" async defer></script>
+    <script src="https://unpkg.com/@daily-co/daily-js" crossorigin></script>
+  </head>
+  <body>
+    <main class="shell">
+      <section class="auth-panel" id="authPanel" aria-labelledby="appTitle">
+        <div class="auth-art" aria-hidden="true">
+          <div class="auth-portrait">
+            <img src="./assets/alma-avatar.png" alt="" />
+          </div>
+        </div>
+
+        <p class="eyebrow">Decision Intelligence</p>
+        <h1 id="appTitle">My Choice</h1>
+        <p class="lede">Sign in to start a focused decision capture session with your configured AI agent.</p>
+
+        <div class="google-card">
+          <div id="googleSignInButton" class="google-button"></div>
+          <p class="config-note" id="configNote" hidden>
+            Add your Google OAuth client ID in <code>.env</code> to enable live Google sign-in.
+          </p>
+          <button class="preview-button" id="previewButton" type="button" hidden>
+            Preview signed-in screen
+          </button>
+        </div>
+      </section>
+
+      <section class="home-panel" id="homePanel" aria-live="polite" hidden>
+        <header class="app-topbar ready-view">
+          <button class="menu-button" type="button" aria-label="Menu">
+            <span></span>
+            <span></span>
+            <span></span>
+          </button>
+          <div class="app-mark" aria-hidden="true">
+            <span></span>
+            <span></span>
+            <span></span>
+          </div>
+          <strong>My Choice</strong>
+          <button class="ghost-button" id="signOutButton" type="button">Sign out</button>
+        </header>
+
+        <div class="app-workspace ready-view">
+          <div class="workspace-heading">
+            <div>
+              <p class="eyebrow">Interview</p>
+              <h1>Decision capture session</h1>
+              <nav class="section-tabs" aria-label="Workspace sections">
+                <button type="button" data-section-tab="profile">Profile</button>
+                <button class="active" type="button" data-section-tab="interview">Interview</button>
+                <button type="button" data-section-tab="business">My Business</button>
+                <button type="button" data-section-tab="training">AI Training</button>
+                <button type="button" data-section-tab="prep">Interview Prep</button>
+              </nav>
+              <p id="welcomeTitle" class="welcome-line">Welcome</p>
+            </div>
+            <div class="workspace-actions">
+            </div>
+          </div>
+
+          <section class="workspace-section" id="profileSection" data-section-panel="profile" hidden>
+            <div class="section-card">
+              <div class="section-card-head">
+                <span>Profile</span>
+                <h2>Personal context</h2>
+              </div>
+              <form class="profile-card" id="profileForm">
+                <div class="form-grid">
+                  <label>
+                    <span>First Name</span>
+                    <input id="firstNameInput" name="firstName" autocomplete="given-name" />
+                  </label>
+                  <label>
+                    <span>Last Name</span>
+                    <input id="lastNameInput" name="lastName" autocomplete="family-name" />
+                  </label>
+                  <label>
+                    <span>LinkedIn</span>
+                    <input id="linkedInInput" name="linkedIn" placeholder="https://www.linkedin.com/in/..." />
+                  </label>
+                  <label>
+                    <span>Domain</span>
+                    <select id="domainInput" name="domain">
+                      <option value="">Select domain</option>
+                      <option value="Property Management">Property Management</option>
+                      <option value="Financial">Financial</option>
+                    </select>
+                  </label>
+                  <label class="full-field resume-upload-field">
+                    <span>Resume</span>
+                    <input
+                      id="resumeInput"
+                      name="resume"
+                      type="file"
+                      accept=".pdf,.doc,.docx,.txt,.md,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain,text/markdown"
+                    />
+                    <small id="resumeStatus">Upload your resume before starting an interview.</small>
+                  </label>
+                  <label class="full-field">
+                    <span>Personal Context</span>
+                    <textarea
+                      id="personalContextInput"
+                      name="personalContext"
+                      placeholder="Add LinkedIn notes, professional background, goals, company context, or anything the interview agent should know."
+                    ></textarea>
+                  </label>
+                  <label class="full-field">
+                    <span>Future Direction</span>
+                    <textarea
+                      id="futureDirectionInput"
+                      name="futureDirection"
+                      placeholder="Describe where you want your career to go next, roles you want, industries you want to explore, and what kind of work you want to avoid."
+                    ></textarea>
+                  </label>
+                </div>
+                <div class="form-actions">
+                  <p class="form-status" id="profileStatus" role="status" aria-live="polite"></p>
+                  <button class="primary-action save-profile-button" type="submit">Save Profile</button>
+                </div>
+              </form>
+            </div>
+          </section>
+
+          <section class="workspace-section active" id="interviewSection" data-section-panel="interview">
+            <div class="decision-grid">
+            <section class="avatar-card" aria-label="Alma avatar">
+              <div class="portrait-ring">
+                <img src="./assets/alma-avatar.png" alt="Alma interview avatar" />
+              </div>
+              <div class="voice-wave" aria-hidden="true"></div>
+            </section>
+
+            <section class="prompt-card" aria-label="Interview status">
+              <div class="prompt-empty">
+                <button class="primary-action" id="interviewButton" type="button" aria-label="Start Interview">
+                  <svg viewBox="0 0 24 24" aria-hidden="true">
+                    <path d="m8 5 11 7-11 7V5Z" />
+                  </svg>
+                  <span>Start Interview</span>
+                </button>
+                <p class="start-requirement" id="startRequirement" role="status" aria-live="polite"></p>
+              </div>
+            </section>
+            </div>
+          </section>
+
+          <section class="workspace-section" id="businessSection" data-section-panel="business" hidden>
+            <div class="section-card">
+              <div class="section-card-head">
+                <span>My Business</span>
+                <h2>Available agents</h2>
+              </div>
+              <div class="agents-grid">
+                <article class="agent-card">
+                  <span>Agent</span>
+                  <strong>Marketing Agent</strong>
+                  <p>Campaign planning, audience messaging, and launch assets.</p>
+                </article>
+                <article class="agent-card">
+                  <span>Agent</span>
+                  <strong>AI Training Agent</strong>
+                  <p>Training workflows, knowledge capture, and enablement support.</p>
+                </article>
+              </div>
+            </div>
+          </section>
+
+          <section class="workspace-section" id="trainingSection" data-section-panel="training" hidden>
+            <div class="section-card">
+              <div class="section-card-head">
+                <span>AI Training</span>
+                <h2>My AI Path</h2>
+              </div>
+              <div class="training-offer">
+                <article class="training-hero-card">
+                  <span>Personalized program</span>
+                  <h3 id="trainingOfferTitle">Career recovery plan</h3>
+                  <p id="trainingOfferSummary">
+                    Uses your LinkedIn, resume, future direction, domain, and interviews to reposition you for AI-ready opportunities.
+                  </p>
+                  <button class="primary-action training-cta" type="button">Start paid training</button>
+                </article>
+                <article class="training-path-card" aria-label="Generated AI career path">
+                  <span>Generated plan</span>
+                  <h3 id="aiPathRoleTitle">Complete your profile to generate your path</h3>
+                  <p id="aiPathOverview">Your path will use LinkedIn, resume, future direction, profile context, and recorded interviews.</p>
+                  <div class="path-pill-row" id="aiPathSkills"></div>
+                  <ul class="path-list" id="aiPathActions"></ul>
+                </article>
+                <div class="training-modules" aria-label="AI Training modules">
+                  <article>
+                    <span>Module 1</span>
+                    <strong>My AI Career Path</strong>
+                    <p id="careerPathCopy">Map your current experience into practical AI-ready roles and skill gaps.</p>
+                  </article>
+                  <article>
+                    <span>Module 2</span>
+                    <strong>AI Tools Bootcamp</strong>
+                    <p>Hands-on training for prompts, research, documents, spreadsheets, presentations, and workflow automation.</p>
+                  </article>
+                  <article>
+                    <span>Module 3</span>
+                    <strong>Domain Practice Lab</strong>
+                    <p id="domainPracticeCopy">Complete exercises and portfolio projects matched to your selected domain.</p>
+                  </article>
+                  <article>
+                    <span>Module 4</span>
+                    <strong>Interview + Portfolio Readiness</strong>
+                    <p>Use interview transcripts to sharpen answers, build proof-of-skill assets, and prepare for new roles.</p>
+                  </article>
+                </div>
+                <section class="bootcamp-section" aria-labelledby="bootcampTitle">
+                  <div class="bootcamp-head">
+                    <span>AI Tools Bootcamp</span>
+                    <h3 id="bootcampTitle">Personalized tools to practice</h3>
+                  </div>
+                  <div class="bootcamp-tools" id="bootcampTools"></div>
+                </section>
+              </div>
+            </div>
+          </section>
+
+          <section class="workspace-section" id="prepSection" data-section-panel="prep" hidden>
+            <div class="section-card">
+              <div class="section-card-head">
+                <span>Interview Prep</span>
+                <h2>Practice for your next role</h2>
+              </div>
+              <div class="agents-grid">
+                <article class="agent-card">
+                  <span>Prep</span>
+                  <strong>Role Story</strong>
+                  <p>Shape your background, layoff story, strengths, and AI-ready positioning into clear answers.</p>
+                </article>
+                <article class="agent-card">
+                  <span>Prep</span>
+                  <strong>Practice Questions</strong>
+                  <p>Generate domain-specific behavioral, technical, and transition questions from your saved context.</p>
+                </article>
+              </div>
+            </div>
+          </section>
+        </div>
+
+        <section class="conversation-panel" id="conversationPanel" hidden>
+          <div class="conversation-actions">
+            <h2>Live Interview</h2>
+            <button class="ghost-button" id="endInterviewButton" type="button">End interview</button>
+          </div>
+          <div class="meeting-shell">
+            <div id="dailyFrameContainer" class="daily-frame-container" aria-label="Tavus live interview"></div>
+            <iframe
+              id="tavusFrame"
+              title="Tavus interview conversation"
+              allow="camera; microphone; fullscreen; display-capture; autoplay"
+            ></iframe>
+            <div class="meeting-toolbar">
+              <div class="meeting-count">
+                <span aria-hidden="true">
+                  <svg viewBox="0 0 24 24">
+                    <path d="M12 2v3M12 19v3M4.93 4.93l2.12 2.12M16.95 16.95l2.12 2.12M2 12h3M19 12h3M4.93 19.07l2.12-2.12M16.95 7.05l2.12-2.12" />
+                    <circle cx="12" cy="12" r="3" />
+                  </svg>
+                </span>
+                <strong>2 people in call</strong>
+              </div>
+              <div class="view-mode">
+                <span>Grid view</span>
+                <button type="button" aria-label="Speaker view" class="view-button">
+                  <svg viewBox="0 0 24 24">
+                    <rect x="4" y="5" width="10" height="14" rx="1" />
+                    <path d="M17 7h3M17 12h3M17 17h3" />
+                  </svg>
+                </button>
+                <button type="button" aria-label="Grid view" class="view-button active">
+                  <svg viewBox="0 0 24 24">
+                    <rect x="4" y="5" width="16" height="14" rx="1" />
+                    <path d="M4 12h16M12 5v14" />
+                  </svg>
+                </button>
+              </div>
+            </div>
+
+            <div class="video-stage">
+              <div class="stage-placeholder" id="stagePlaceholder">
+                <div class="call-grid-preview">
+                  <article class="video-preview user-preview">
+                    <div class="camera-placeholder">You</div>
+                    <div class="nameplate">
+                      <svg viewBox="0 0 24 24" aria-hidden="true">
+                        <path d="M12 3v10M8 9v2a4 4 0 0 0 8 0V9M5 11v1a7 7 0 0 0 14 0v-1M12 19v3" />
+                      </svg>
+                      <strong>Yuri Bogdanov (You)</strong>
+                    </div>
+                  </article>
+                  <article class="video-preview alma-preview">
+                    <img src="./assets/alma-avatar.png" alt="" />
+                    <div class="nameplate">
+                      <svg viewBox="0 0 24 24" aria-hidden="true">
+                        <path d="M12 3v10M8 9v2a4 4 0 0 0 8 0V9M5 11v1a7 7 0 0 0 14 0v-1M12 19v3" />
+                      </svg>
+                      <strong>Alma</strong>
+                    </div>
+                  </article>
+                </div>
+                <p class="status-message" id="interviewStatus" role="status" aria-live="polite"></p>
+              </div>
+            </div>
+
+            <div class="meeting-controls" aria-label="Interview controls">
+              <button type="button" class="control-button">
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <rect x="3" y="7" width="12" height="10" rx="2" />
+                  <path d="m15 10 5-3v10l-5-3" />
+                </svg>
+                <span>Turn off</span>
+              </button>
+              <button type="button" class="control-button">
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="M12 3v10M8 9v2a4 4 0 0 0 8 0V9M5 11v1a7 7 0 0 0 14 0v-1M12 19v3" />
+                </svg>
+                <span>Mute</span>
+              </button>
+              <span class="control-spacer"></span>
+              <button type="button" class="control-button">
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="M16 21v-2a4 4 0 0 0-8 0v2M12 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8Z" />
+                </svg>
+                <span>People</span>
+              </button>
+              <button type="button" class="control-button">
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <rect x="5" y="5" width="14" height="14" rx="2" />
+                  <path d="M12 16V8M8.5 11.5 12 8l3.5 3.5" />
+                </svg>
+                <span>Share</span>
+              </button>
+              <span class="control-spacer"></span>
+              <button type="button" class="control-button leave-control" id="leaveInterviewButton">
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="M15 7h3a3 3 0 0 1 3 3v4a3 3 0 0 1-3 3h-3M10 17l5-5-5-5M15 12H3" />
+                </svg>
+                <span>Leave</span>
+              </button>
+            </div>
+          </div>
+        </section>
+      </section>
+    </main>
+
+    <script src="./config.js"></script>
+    <script src="./app.js"></script>
+  </body>
+</html>
