@@ -88,6 +88,13 @@ resumeInput.addEventListener("change", () => {
     ? `Ready to save: ${file.name}`
     : currentUser?.resumeFileName || "Upload your resume before starting an interview.";
 });
+recordingsList?.addEventListener("click", (event) => {
+  const target = event.target;
+
+  if (target instanceof HTMLElement && target.closest("[data-refresh-recordings]")) {
+    loadInterviewHistory();
+  }
+});
 
 async function initializeApp() {
   showAuth();
@@ -410,7 +417,7 @@ async function loadInterviewHistory() {
       throw new Error(data.error || "Unable to load previous interviews.");
     }
 
-    renderInterviewHistory(data.interviews || []);
+    renderInterviewHistory(data.interviews || [], data);
   } catch (error) {
     recordingsList.replaceChildren();
     const message = document.createElement("p");
@@ -421,13 +428,14 @@ async function loadInterviewHistory() {
         : error instanceof Error
           ? error.message
           : "Unable to load previous interviews.";
-    recordingsList.append(message);
+    const retry = createRefreshRecordingsButton();
+    recordingsList.append(message, retry);
   } finally {
     window.clearTimeout(timeout);
   }
 }
 
-function renderInterviewHistory(interviews) {
+function renderInterviewHistory(interviews, meta = {}) {
   if (!recordingsList) {
     return;
   }
@@ -437,12 +445,23 @@ function renderInterviewHistory(interviews) {
   if (!interviews.length) {
     const empty = document.createElement("p");
     empty.className = "recordings-empty";
-    empty.textContent = "No previous recordings yet. Start your first interview to create one.";
-    recordingsList.append(empty);
+    empty.textContent =
+      meta.userId
+        ? `No previous recordings found for signed-in user ${meta.userId}.`
+        : "No previous recordings yet. Start your first interview to create one.";
+    const hint = document.createElement("p");
+    hint.className = "recordings-hint";
+    hint.textContent = "If you recorded interviews already, sign out and sign in with the same Google account used for those sessions.";
+    recordingsList.append(empty, hint, createRefreshRecordingsButton());
     return;
   }
 
+  const summary = document.createElement("p");
+  summary.className = "recordings-hint";
+  summary.textContent = `${interviews.length} previous interview${interviews.length === 1 ? "" : "s"} found.`;
+
   recordingsList.replaceChildren(
+    summary,
     ...interviews.map((interview) => {
       const item = document.createElement("article");
       item.className = "recording-item";
@@ -466,6 +485,15 @@ function renderInterviewHistory(interviews) {
       return item;
     })
   );
+}
+
+function createRefreshRecordingsButton() {
+  const button = document.createElement("button");
+  button.className = "recordings-refresh";
+  button.type = "button";
+  button.dataset.refreshRecordings = "true";
+  button.textContent = "Refresh recordings";
+  return button;
 }
 
 function formatInterviewDate(value) {

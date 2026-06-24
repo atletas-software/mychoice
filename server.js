@@ -278,6 +278,8 @@ async function listUserInterviews(req, res) {
   `, [sessionUser.id]);
 
   sendJson(res, 200, {
+    userId: sessionUser.id,
+    count: interviews.length,
     interviews: interviews.map((interview) => ({
       id: interview.id,
       domain: interview.domain || "",

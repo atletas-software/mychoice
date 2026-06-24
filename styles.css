@@ -523,6 +523,25 @@ code {
   color: #ffd1cc;
 }
 
+.recordings-hint {
+  margin: 0;
+  color: #88a0b7;
+  font-size: 0.88rem;
+  line-height: 1.45;
+}
+
+.recordings-refresh {
+  justify-self: start;
+  min-height: 38px;
+  padding: 0 14px;
+  color: #ffffff;
+  background: #559eae;
+  border: 1px solid #69b7c7;
+  border-radius: 8px;
+  cursor: pointer;
+  font-weight: 800;
+}
+
 .recording-item {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
