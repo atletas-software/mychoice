@@ -14,6 +14,8 @@ const publicCallbackBaseUrl = cleanEnvValue(process.env.PUBLIC_CALLBACK_BASE_URL
 const publicDir = __dirname;
 const databasePath = path.join(__dirname, "data", "interview-me.sqlite");
 let db;
+let databaseKind = "starting";
+let mysqlConfigured = false;
 
 const mimeTypes = {
   ".css": "text/css; charset=utf-8",
@@ -34,6 +36,11 @@ const server = http.createServer(async (req, res) => {
         tavusPersonaId: "p68693404eba",
         tavusReplicaId: ""
       });
+      return;
+    }
+
+    if (req.method === "GET" && url.pathname === "/api/health") {
+      await getHealthStatus(res);
       return;
     }
 
@@ -284,6 +291,25 @@ async function listUserInterviews(req, res) {
       lastTranscriptAt: interview.last_transcript_at || ""
     }))
   });
+}
+
+async function getHealthStatus(res) {
+  const status = {
+    ok: true,
+    database: databaseKind,
+    mysqlConfigured,
+    tables: {}
+  };
+
+  try {
+    const tables = await db.getTableCounts();
+    status.tables = tables;
+  } catch (error) {
+    status.ok = false;
+    status.error = error instanceof Error ? error.message : "Unable to read database status.";
+  }
+
+  sendJson(res, status.ok ? 200 : 500, status);
 }
 
 async function handleTavusCallback(req, res) {
@@ -1228,10 +1254,15 @@ function serializeUser(user) {
 }
 
 async function openDatabase(filePath) {
+  mysqlConfigured = hasMySqlConfig();
+
   if (hasMySqlConfig()) {
-    return openMySqlDatabase();
+    const mysqlDatabase = await openMySqlDatabase();
+    databaseKind = "mysql";
+    return mysqlDatabase;
   }
 
+  databaseKind = "sqlite";
   return openSqliteDatabase(filePath);
 }
 
@@ -1496,6 +1527,15 @@ class SqliteAdapter {
         updated_at = excluded.updated_at
     `, [sessionId, domain, schemaVersion, structuredJson, confidenceJson, createdAt, updatedAt]);
   }
+
+  getTableCounts() {
+    return {
+      users: Number(this.get("SELECT COUNT(*) AS count FROM users").count || 0),
+      interviewSessions: Number(this.get("SELECT COUNT(*) AS count FROM interview_sessions").count || 0),
+      transcriptTurns: Number(this.get("SELECT COUNT(*) AS count FROM conversation_transcripts").count || 0),
+      structuredOutputs: Number(this.get("SELECT COUNT(*) AS count FROM structured_interview_outputs").count || 0)
+    };
+  }
 }
 
 class MySqlAdapter {
@@ -1673,6 +1713,22 @@ class MySqlAdapter {
         confidence_json = VALUES(confidence_json),
         updated_at = VALUES(updated_at)
     `, [sessionId, domain, schemaVersion, structuredJson, confidenceJson, createdAt, updatedAt]);
+  }
+
+  async getTableCounts() {
+    const [users, interviewSessions, transcriptTurns, structuredOutputs] = await Promise.all([
+      this.get("SELECT COUNT(*) AS count FROM users"),
+      this.get("SELECT COUNT(*) AS count FROM interview_sessions"),
+      this.get("SELECT COUNT(*) AS count FROM conversation_transcripts"),
+      this.get("SELECT COUNT(*) AS count FROM structured_interview_outputs")
+    ]);
+
+    return {
+      users: Number(users?.count || 0),
+      interviewSessions: Number(interviewSessions?.count || 0),
+      transcriptTurns: Number(transcriptTurns?.count || 0),
+      structuredOutputs: Number(structuredOutputs?.count || 0)
+    };
   }
 }
 
