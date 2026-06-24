@@ -255,12 +255,17 @@ async function listUserInterviews(req, res) {
            i.ended_at,
            i.created_at,
            i.updated_at,
-           COUNT(t.id) AS transcript_count,
-           MAX(t.created_at) AS last_transcript_at
+           COALESCE(t.transcript_count, 0) AS transcript_count,
+           t.last_transcript_at
     FROM interview_sessions i
-    LEFT JOIN conversation_transcripts t ON t.session_id = i.id
+    LEFT JOIN (
+      SELECT session_id,
+             COUNT(*) AS transcript_count,
+             MAX(created_at) AS last_transcript_at
+      FROM conversation_transcripts
+      GROUP BY session_id
+    ) t ON t.session_id = i.id
     WHERE i.user_id = ?
-    GROUP BY i.id, i.domain, i.status, i.tavus_conversation_id, i.started_at, i.ended_at, i.created_at, i.updated_at
     ORDER BY COALESCE(i.started_at, i.created_at) DESC
     LIMIT 25
   `, [sessionUser.id]);

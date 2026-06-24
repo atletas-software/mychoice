@@ -382,7 +382,12 @@ async function endActiveInterview() {
 }
 
 async function loadInterviewHistory() {
-  if (!recordingsList || !currentUser) {
+  if (!recordingsList) {
+    return;
+  }
+
+  if (!currentUser) {
+    renderInterviewHistory([]);
     return;
   }
 
@@ -392,8 +397,13 @@ async function loadInterviewHistory() {
   loading.textContent = "Loading previous interviews...";
   recordingsList.append(loading);
 
+  const controller = new AbortController();
+  const timeout = window.setTimeout(() => controller.abort(), 8000);
+
   try {
-    const response = await fetch("/api/interviews");
+    const response = await fetch("/api/interviews", {
+      signal: controller.signal
+    });
     const data = await response.json().catch(() => ({}));
 
     if (!response.ok) {
@@ -405,8 +415,15 @@ async function loadInterviewHistory() {
     recordingsList.replaceChildren();
     const message = document.createElement("p");
     message.className = "recordings-empty error";
-    message.textContent = error instanceof Error ? error.message : "Unable to load previous interviews.";
+    message.textContent =
+      error instanceof DOMException && error.name === "AbortError"
+        ? "Previous interviews are taking too long to load. Refresh or try again after redeploy."
+        : error instanceof Error
+          ? error.message
+          : "Unable to load previous interviews.";
     recordingsList.append(message);
+  } finally {
+    window.clearTimeout(timeout);
   }
 }
 
