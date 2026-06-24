@@ -276,6 +276,8 @@ async function listUserInterviews(req, res) {
              COUNT(*) AS transcript_count,
              MAX(created_at) AS last_transcript_at
       FROM conversation_transcripts
+      WHERE LOWER(COALESCE(speaker, '')) <> 'system'
+        AND LOWER(COALESCE(speaker_role, '')) <> 'system'
       GROUP BY session_id
     ) t ON t.session_id = i.id
     WHERE i.user_id = ?
@@ -326,6 +328,8 @@ async function getUserInterviewDetail(req, res, interviewId) {
            source_event_type, created_at
     FROM conversation_transcripts
     WHERE session_id = ?
+      AND LOWER(COALESCE(speaker, '')) <> 'system'
+      AND LOWER(COALESCE(speaker_role, '')) <> 'system'
     ORDER BY COALESCE(turn_index, id) ASC, id ASC
   `, [interview.id]);
 

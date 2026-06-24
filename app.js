@@ -532,7 +532,7 @@ function renderInterviewDetail(data) {
   const existingPanel = recordingsList.querySelector("[data-interview-detail]");
   const panel = existingPanel || document.createElement("section");
   const interview = data.interview || {};
-  const transcript = data.transcript || [];
+  const transcript = (data.transcript || []).filter(isDisplayableTranscriptTurn);
 
   panel.className = "recording-detail";
   panel.dataset.interviewDetail = "true";
@@ -577,6 +577,22 @@ function renderInterviewDetail(data) {
   if (!existingPanel) {
     recordingsList.append(panel);
   }
+}
+
+function isDisplayableTranscriptTurn(turn) {
+  const speaker = String(turn.speaker || turn.speakerRole || "").trim().toLowerCase();
+  const text = String(turn.text || "").trim().toLowerCase();
+
+  if (!text || speaker === "system") {
+    return false;
+  }
+
+  return !(
+    text.startsWith("you are an interviewer") ||
+    text.includes("this is a my choice decision capture session") ||
+    text.includes("the signed-in user's email") ||
+    text.includes("conversation context")
+  );
 }
 
 function createRefreshRecordingsButton() {
