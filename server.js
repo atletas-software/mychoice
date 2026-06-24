@@ -393,8 +393,10 @@ async function authenticateGoogleUser(req, res) {
     VALUES (?, ?, ?, ?)
   `, [token, user.id, now, expiresAt]);
 
+  const fullUser = await getUserById(user.id);
+
   res.setHeader("Set-Cookie", buildSessionCookie(token, expiresAt));
-  sendJson(res, 200, { user: serializeUser(user) });
+  sendJson(res, 200, { user: fullUser });
 }
 
 async function logoutUser(req, res) {
