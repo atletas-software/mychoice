@@ -93,6 +93,15 @@ recordingsList?.addEventListener("click", (event) => {
 
   if (target instanceof HTMLElement && target.closest("[data-refresh-recordings]")) {
     loadInterviewHistory();
+    return;
+  }
+
+  const recordingButton = target instanceof HTMLElement
+    ? target.closest("[data-interview-id]")
+    : null;
+
+  if (recordingButton instanceof HTMLElement) {
+    loadInterviewDetail(recordingButton.dataset.interviewId || "");
   }
 });
 
@@ -463,8 +472,10 @@ function renderInterviewHistory(interviews, meta = {}) {
   recordingsList.replaceChildren(
     summary,
     ...interviews.map((interview) => {
-      const item = document.createElement("article");
+      const item = document.createElement("button");
       item.className = "recording-item";
+      item.type = "button";
+      item.dataset.interviewId = String(interview.id || "");
       const date = interview.startedAt || interview.createdAt;
       const transcriptLabel =
         interview.transcriptCount === 1
@@ -487,6 +498,87 @@ function renderInterviewHistory(interviews, meta = {}) {
   );
 }
 
+async function loadInterviewDetail(interviewId) {
+  if (!recordingsList || !interviewId) {
+    return;
+  }
+
+  const existingPanel = recordingsList.querySelector("[data-interview-detail]");
+  existingPanel?.remove();
+
+  const loading = document.createElement("section");
+  loading.className = "recording-detail";
+  loading.dataset.interviewDetail = "true";
+  loading.innerHTML = `<p class="recordings-hint">Loading transcript...</p>`;
+  recordingsList.append(loading);
+
+  try {
+    const response = await fetch(`/api/interviews/${encodeURIComponent(interviewId)}`);
+    const data = await response.json().catch(() => ({}));
+
+    if (!response.ok) {
+      throw new Error(data.error || "Unable to load interview transcript.");
+    }
+
+    renderInterviewDetail(data);
+  } catch (error) {
+    loading.innerHTML = `
+      <p class="recordings-empty error">${escapeHtml(error instanceof Error ? error.message : "Unable to load interview transcript.")}</p>
+    `;
+  }
+}
+
+function renderInterviewDetail(data) {
+  const existingPanel = recordingsList.querySelector("[data-interview-detail]");
+  const panel = existingPanel || document.createElement("section");
+  const interview = data.interview || {};
+  const transcript = data.transcript || [];
+
+  panel.className = "recording-detail";
+  panel.dataset.interviewDetail = "true";
+  panel.innerHTML = `
+    <div class="recording-detail-head">
+      <div>
+        <span>Transcript</span>
+        <strong>${escapeHtml(formatInterviewDate(interview.startedAt || interview.createdAt))}</strong>
+      </div>
+      <span>${escapeHtml(interview.status || "unknown")}</span>
+    </div>
+  `;
+
+  if (!transcript.length) {
+    const empty = document.createElement("p");
+    empty.className = "recordings-empty";
+    empty.textContent = "No transcript turns were captured for this interview yet.";
+    panel.append(empty);
+  } else {
+    const turns = document.createElement("div");
+    turns.className = "transcript-turns";
+    turns.replaceChildren(
+      ...transcript.map((turn) => {
+        const item = document.createElement("article");
+        item.className = "transcript-turn";
+        const speaker = turn.speaker || turn.speakerRole || "Speaker";
+        const time = turn.startedAt || turn.createdAt || "";
+
+        item.innerHTML = `
+          <div>
+            <strong>${escapeHtml(speaker)}</strong>
+            <span>${escapeHtml(formatTranscriptTime(time))}</span>
+          </div>
+          <p>${escapeHtml(turn.text || "")}</p>
+        `;
+        return item;
+      })
+    );
+    panel.append(turns);
+  }
+
+  if (!existingPanel) {
+    recordingsList.append(panel);
+  }
+}
+
 function createRefreshRecordingsButton() {
   const button = document.createElement("button");
   button.className = "recordings-refresh";
@@ -494,6 +586,24 @@ function createRefreshRecordingsButton() {
   button.dataset.refreshRecordings = "true";
   button.textContent = "Refresh recordings";
   return button;
+}
+
+function formatTranscriptTime(value) {
+  if (!value) {
+    return "";
+  }
+
+  const date = new Date(value);
+
+  if (Number.isNaN(date.getTime())) {
+    return value;
+  }
+
+  return date.toLocaleTimeString([], {
+    hour: "numeric",
+    minute: "2-digit",
+    second: "2-digit"
+  });
 }
 
 function formatInterviewDate(value) {

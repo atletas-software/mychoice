@@ -65,6 +65,12 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
+    const interviewMatch = url.pathname.match(/^\/api\/interviews\/(\d+)$/);
+    if (req.method === "GET" && interviewMatch) {
+      await getUserInterviewDetail(req, res, Number(interviewMatch[1]));
+      return;
+    }
+
     if (req.method === "PUT" && url.pathname === "/api/profile") {
       await updateProfile(req, res);
       return;
@@ -292,6 +298,78 @@ async function listUserInterviews(req, res) {
       transcriptCount: Number(interview.transcript_count || 0),
       lastTranscriptAt: interview.last_transcript_at || ""
     }))
+  });
+}
+
+async function getUserInterviewDetail(req, res, interviewId) {
+  const sessionUser = await getSessionUser(req);
+
+  if (!sessionUser) {
+    sendJson(res, 401, { error: "Sign in to view recordings." });
+    return;
+  }
+
+  const interview = await db.get(`
+    SELECT id, user_id, domain, status, tavus_conversation_id, persona_id,
+           started_at, ended_at, created_at, updated_at
+    FROM interview_sessions
+    WHERE id = ? AND user_id = ?
+  `, [interviewId, sessionUser.id]);
+
+  if (!interview) {
+    sendJson(res, 404, { error: "Interview recording not found." });
+    return;
+  }
+
+  const transcript = await db.all(`
+    SELECT id, speaker, speaker_role, turn_index, text, started_at, ended_at,
+           source_event_type, created_at
+    FROM conversation_transcripts
+    WHERE session_id = ?
+    ORDER BY COALESCE(turn_index, id) ASC, id ASC
+  `, [interview.id]);
+
+  const structured = await db.get(`
+    SELECT domain, schema_version, structured_json, confidence_json, created_at, updated_at
+    FROM structured_interview_outputs
+    WHERE session_id = ?
+    ORDER BY updated_at DESC, id DESC
+    LIMIT 1
+  `, [interview.id]);
+
+  sendJson(res, 200, {
+    interview: {
+      id: interview.id,
+      domain: interview.domain || "",
+      status: interview.status || "",
+      tavusConversationId: interview.tavus_conversation_id || "",
+      personaId: interview.persona_id || "",
+      startedAt: interview.started_at || "",
+      endedAt: interview.ended_at || "",
+      createdAt: interview.created_at || "",
+      updatedAt: interview.updated_at || ""
+    },
+    transcript: transcript.map((turn) => ({
+      id: turn.id,
+      speaker: turn.speaker || "",
+      speakerRole: turn.speaker_role || "",
+      turnIndex: turn.turn_index,
+      text: turn.text || "",
+      startedAt: turn.started_at || "",
+      endedAt: turn.ended_at || "",
+      eventType: turn.source_event_type || "",
+      createdAt: turn.created_at || ""
+    })),
+    structured: structured
+      ? {
+          domain: structured.domain || "",
+          schemaVersion: structured.schema_version || "",
+          structured: parseJson(structured.structured_json, {}),
+          confidence: parseJson(structured.confidence_json, {}),
+          createdAt: structured.created_at || "",
+          updatedAt: structured.updated_at || ""
+        }
+      : null
   });
 }
 

@@ -547,11 +547,22 @@ code {
   grid-template-columns: minmax(0, 1fr) auto;
   gap: 14px;
   align-items: center;
+  width: 100%;
   min-height: 74px;
   padding: 14px 16px;
+  color: inherit;
+  text-align: left;
   background: #14283a;
   border: 1px solid #2b4054;
   border-radius: 8px;
+  cursor: pointer;
+}
+
+.recording-item:hover,
+.recording-item:focus-visible {
+  border-color: #69b7c7;
+  outline: 0;
+  transform: translateY(-1px);
 }
 
 .recording-item div {
@@ -576,6 +587,82 @@ code {
 .recording-status {
   color: #ffffff !important;
   text-transform: capitalize;
+}
+
+.recording-detail {
+  display: grid;
+  gap: 16px;
+  margin-top: 4px;
+  padding: 18px;
+  background: #0b1a26;
+  border: 1px solid #2b4054;
+  border-radius: 8px;
+}
+
+.recording-detail-head {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 16px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid #2b4054;
+}
+
+.recording-detail-head div {
+  display: grid;
+  gap: 5px;
+}
+
+.recording-detail-head span {
+  color: #88a0b7;
+  font-size: 0.82rem;
+  font-weight: 820;
+  text-transform: uppercase;
+}
+
+.recording-detail-head strong {
+  color: #e8f0fb;
+  font-size: 1rem;
+}
+
+.transcript-turns {
+  display: grid;
+  gap: 12px;
+  max-height: 420px;
+  overflow: auto;
+  padding-right: 4px;
+}
+
+.transcript-turn {
+  display: grid;
+  gap: 8px;
+  padding: 14px;
+  background: #14283a;
+  border: 1px solid #294158;
+  border-radius: 8px;
+}
+
+.transcript-turn div {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.transcript-turn strong {
+  color: #e8f0fb;
+}
+
+.transcript-turn span {
+  color: #88a0b7;
+  font-size: 0.82rem;
+  font-weight: 720;
+}
+
+.transcript-turn p {
+  margin: 0;
+  color: #c8d6e5;
+  line-height: 1.5;
 }
 
 .workspace-section {
