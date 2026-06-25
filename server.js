@@ -11,6 +11,9 @@ const host = process.env.HOST || "127.0.0.1";
 const tavusApiKey = process.env.TAVUS_API_KEY || "";
 const googleClientId = process.env.GOOGLE_CLIENT_ID || "";
 const publicCallbackBaseUrl = cleanEnvValue(process.env.PUBLIC_CALLBACK_BASE_URL || "");
+const tavusDocumentIds = parseEnvList(process.env.TAVUS_DOCUMENT_IDS || "");
+const tavusDocumentTags = parseEnvList(process.env.TAVUS_DOCUMENT_TAGS || "");
+const tavusDocumentRetrievalStrategy = cleanEnvValue(process.env.TAVUS_DOCUMENT_RETRIEVAL_STRATEGY || "balanced");
 const publicDir = __dirname;
 const databasePath = path.join(__dirname, "data", "interview-me.sqlite");
 let db;
@@ -57,6 +60,17 @@ const server = http.createServer(async (req, res) => {
 
     if (req.method === "GET" && url.pathname === "/api/ai-training/path") {
       await getAiTrainingPath(req, res);
+      return;
+    }
+
+    if (req.method === "GET" && url.pathname === "/api/knowledge") {
+      await getDecisionKnowledge(req, res, url);
+      return;
+    }
+
+    const contextDocumentMatch = url.pathname.match(/^\/context-documents\/(domain|user)\/([^/]+)\.txt$/);
+    if (req.method === "GET" && contextDocumentMatch) {
+      await serveContextDocument(req, res, url, contextDocumentMatch[1], contextDocumentMatch[2]);
       return;
     }
 
@@ -122,6 +136,8 @@ const server = http.createServer(async (req, res) => {
 
 async function bootstrap() {
   db = await openDatabase(databasePath);
+  await seedDomainUdm();
+  await rebuildDecisionKnowledgeForExistingSessions();
   server.listen(port, host, () => {
     console.log(`Interview Me app listening on http://${host}:${port}`);
   });
@@ -195,19 +211,30 @@ async function createTavusConversation(req, res) {
     ? `${publicCallbackBaseUrl.replace(/\/$/, "")}/api/tavus/utterance`
     : "";
 
+  await syncContextForTavus(sessionUser);
+  const conversationContext = await buildConversationContext(sessionUser);
+  const syncedDocumentIds = await getConversationTavusDocumentIds(sessionUser);
+  const documentIds = [...new Set([...tavusDocumentIds, ...syncedDocumentIds])];
+  const tavusRequestBody = {
+    ...(personaId ? { persona_id: personaId } : {}),
+    ...(replicaId ? { replica_id: replicaId } : {}),
+    ...(callbackUrl ? { callback_url: callbackUrl } : {}),
+    ...(documentIds.length ? { document_ids: documentIds } : {}),
+    ...(tavusDocumentTags.length ? { document_tags: tavusDocumentTags } : {}),
+    ...((documentIds.length || tavusDocumentTags.length) && tavusDocumentRetrievalStrategy
+      ? { document_retrieval_strategy: tavusDocumentRetrievalStrategy }
+      : {}),
+    conversation_name: cleanValue(body.conversation_name) || "Interview Me",
+    conversational_context: conversationContext
+  };
+
   const tavusResponse = await fetch("https://tavusapi.com/v2/conversations", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
       "x-api-key": tavusApiKey
     },
-    body: JSON.stringify({
-      ...(personaId ? { persona_id: personaId } : {}),
-      ...(replicaId ? { replica_id: replicaId } : {}),
-      ...(callbackUrl ? { callback_url: callbackUrl } : {}),
-      conversation_name: cleanValue(body.conversation_name) || "Interview Me",
-      conversational_context: buildConversationContext(sessionUser)
-    })
+    body: JSON.stringify(tavusRequestBody)
   });
 
   const data = await tavusResponse.json().catch(() => ({}));
@@ -249,6 +276,85 @@ async function getAiTrainingPath(req, res) {
   const transcripts = await getUserTranscriptContext(sessionUser.id);
   const path = generateAiTrainingPath(sessionUser, transcripts);
   sendJson(res, 200, { path });
+}
+
+async function getDecisionKnowledge(req, res, url) {
+  const sessionUser = await getSessionUser(req);
+
+  if (!sessionUser) {
+    sendJson(res, 401, { error: "Sign in to view decision knowledge." });
+    return;
+  }
+
+  const requestedDomain = cleanValue(url.searchParams.get("domain"));
+  const domain = requestedDomain || sessionUser.domain || "Property Management";
+  const concepts = await db.all(`
+    SELECT domain, concept_key, label, concept_type, description, shared_flag
+    FROM domain_udm_concepts
+    WHERE domain IN ('Core', ?)
+    ORDER BY domain, concept_type, label
+  `, [domain]);
+  const relationships = await db.all(`
+    SELECT domain, source_concept_key, relationship_type, target_concept_key, description
+    FROM domain_udm_relationships
+    WHERE domain IN ('Core', ?)
+    ORDER BY domain, relationship_type, source_concept_key
+  `, [domain]);
+  const cases = await db.all(`
+    SELECT id, session_id, domain, use_case, title, decision_statement,
+           context_summary, signals_json, constraints_json, options_json,
+           tradeoffs_json, actions_json, outcomes_json, pattern_summary,
+           confidence, created_at, updated_at
+    FROM decision_cases
+    WHERE domain = ?
+    ORDER BY updated_at DESC, id DESC
+    LIMIT 50
+  `, [domain]);
+
+  sendJson(res, 200, {
+    domain,
+    architecture: {
+      model: "Shared decision spine plus domain modules",
+      sharedUdm:
+        "Decision primitives are shared across domains: Context, Signal, Constraint, Option, Tradeoff, Action, Outcome, Pattern, Evidence.",
+      domainModules:
+        "Each domain adds its own vocabulary and relationships while mapping back to the shared decision spine."
+    },
+    concepts: concepts.map((concept) => ({
+      domain: concept.domain,
+      key: concept.concept_key,
+      label: concept.label,
+      type: concept.concept_type,
+      description: concept.description,
+      shared: Boolean(concept.shared_flag)
+    })),
+    relationships: relationships.map((relationship) => ({
+      domain: relationship.domain,
+      source: relationship.source_concept_key,
+      type: relationship.relationship_type,
+      target: relationship.target_concept_key,
+      description: relationship.description
+    })),
+    decisionCases: cases.map((item) => ({
+      id: item.id,
+      sessionId: item.session_id,
+      domain: item.domain,
+      useCase: item.use_case,
+      title: item.title,
+      decision: item.decision_statement,
+      context: item.context_summary,
+      signals: parseJson(item.signals_json, []),
+      constraints: parseJson(item.constraints_json, []),
+      options: parseJson(item.options_json, []),
+      tradeoffs: parseJson(item.tradeoffs_json, []),
+      actions: parseJson(item.actions_json, []),
+      outcomes: parseJson(item.outcomes_json, []),
+      pattern: item.pattern_summary,
+      confidence: item.confidence,
+      createdAt: item.created_at,
+      updatedAt: item.updated_at
+    }))
+  });
 }
 
 async function listUserInterviews(req, res) {
@@ -415,6 +521,7 @@ async function handleTavusCallback(req, res) {
 
     await storeTranscriptTurns(session.id, transcript, payload);
     await storeStructuredOutput(session.id, session.domain, transcript);
+    await extractDecisionKnowledgeForSession(session.id);
     await markInterviewSession(session.id, {
       status: "transcribed",
       endedAt: timestamp,
@@ -437,6 +544,7 @@ async function handleTavusCallback(req, res) {
   }
 
   if (eventType === "system.shutdown") {
+    await extractDecisionKnowledgeForSession(session.id);
     await markInterviewSession(session.id, {
       status: "ended",
       endedAt: timestamp,
@@ -458,6 +566,7 @@ async function handleTavusUtterance(req, res) {
   }
 
   const stored = await storeUtteranceEvent(session.id, payload);
+  await extractDecisionKnowledgeForSession(session.id);
   await markInterviewSession(session.id, {
     status: "active",
     metadata: { last_utterance_event: payload }
@@ -594,6 +703,7 @@ async function updateProfile(req, res) {
   });
 
   const user = await getUserById(sessionUser.id);
+  await syncContextForTavus(user);
   sendJson(res, 200, { user });
 }
 
@@ -715,9 +825,37 @@ function normalizeResumePayload(value) {
   };
 }
 
-function buildConversationContext(user) {
+async function serveContextDocument(req, res, url, scope, rawScopeId) {
+  const scopeId = decodeURIComponent(rawScopeId);
+  const token = cleanValue(url.searchParams.get("token"));
+
+  if (!token || token !== getTavusDocumentToken(scope, scopeId)) {
+    sendJson(res, 403, { error: "Invalid context document token." });
+    return;
+  }
+
+  const text = scope === "domain"
+    ? await buildDomainContextDocument(scopeId)
+    : await buildUserContextDocument(Number(scopeId));
+
+  if (!text) {
+    sendJson(res, 404, { error: "Context document not found." });
+    return;
+  }
+
+  res.writeHead(200, {
+    "Content-Type": "text/plain; charset=utf-8",
+    "Cache-Control": "no-store, max-age=0"
+  });
+  res.end(text);
+}
+
+async function buildConversationContext(user) {
   const name = cleanValue(user?.name);
   const email = cleanValue(user?.email);
+  const domain = normalizeDomain(user?.domain);
+  const sharedContext = await getSharedDomainContext(domain);
+  const knowledgeSummary = await getDomainKnowledgeSummaryForConversation(domain);
   const parts = ["This is a My Choice decision capture session started from the local web app."];
 
   if (name) {
@@ -732,8 +870,16 @@ function buildConversationContext(user) {
     parts.push(`LinkedIn profile URL: ${user.linkedIn}.`);
   }
 
-  if (user?.domain) {
-    parts.push(`Business domain: ${user.domain}.`);
+  if (domain) {
+    parts.push(`Business domain: ${domain}.`);
+  }
+
+  if (sharedContext) {
+    parts.push(`Shared domain expertise for the interviewer: ${sharedContext.slice(0, 2200)}`);
+  }
+
+  if (knowledgeSummary) {
+    parts.push(`Prior domain decision knowledge to use for better follow-up questions: ${knowledgeSummary}`);
   }
 
   if (user?.resumeFileName) {
@@ -752,7 +898,255 @@ function buildConversationContext(user) {
     parts.push(`Future career direction: ${user.futureDirection}`);
   }
 
+  parts.push(
+    "Interview objective: ask targeted questions that fill missing decision knowledge. Capture the user's real expertise, signals they use, constraints, options, tradeoffs, actions, outcomes, and examples. Ask concise follow-up questions when an answer is vague."
+  );
+
   return parts.join(" ");
+}
+
+async function getSharedDomainContext(domain) {
+  const row = await db.get(`
+    SELECT context_text
+    FROM domain_shared_contexts
+    WHERE domain = ?
+  `, [normalizeDomain(domain)]);
+
+  return cleanValue(row?.context_text);
+}
+
+async function getDomainKnowledgeSummaryForConversation(domain) {
+  const cases = await db.all(`
+    SELECT use_case, pattern_summary, signals_json, constraints_json
+    FROM decision_cases
+    WHERE domain = ?
+    ORDER BY updated_at DESC, id DESC
+    LIMIT 8
+  `, [normalizeDomain(domain)]);
+
+  if (!cases.length) {
+    return "";
+  }
+
+  return cases.map((item) => {
+    const signals = parseJson(item.signals_json, []).slice(0, 3).join(", ");
+    const constraints = parseJson(item.constraints_json, []).slice(0, 3).join(", ");
+    return `${item.use_case}: ${item.pattern_summary || "pattern pending"} Signals: ${signals || "pending"}. Constraints: ${constraints || "pending"}.`;
+  }).join(" ");
+}
+
+async function syncContextForTavus(user) {
+  if (!tavusApiKey || !publicCallbackBaseUrl || !user?.id) {
+    return;
+  }
+
+  const domain = normalizeDomain(user.domain);
+
+  try {
+    await syncTavusContextDocument("domain", domain, domain);
+    await syncTavusContextDocument("user", String(user.id), domain);
+  } catch (error) {
+    console.warn("Tavus context sync failed", error instanceof Error ? error.message : error);
+  }
+}
+
+async function getConversationTavusDocumentIds(user) {
+  if (!user?.id) {
+    return [];
+  }
+
+  const domain = normalizeDomain(user.domain);
+  return db.listLatestTavusDocumentIds([
+    { scope: "domain", scopeId: domain },
+    { scope: "user", scopeId: String(user.id) }
+  ]);
+}
+
+async function syncTavusContextDocument(scope, scopeId, domain) {
+  const text = scope === "domain"
+    ? await buildDomainContextDocument(scopeId)
+    : await buildUserContextDocument(Number(scopeId));
+
+  if (!text) {
+    return;
+  }
+
+  const contentHash = crypto.createHash("sha256").update(text).digest("hex");
+  const previous = await db.getLatestTavusDocumentSync(scope, scopeId);
+
+  if (previous?.content_hash === contentHash && previous?.document_id) {
+    return;
+  }
+
+  const now = new Date().toISOString();
+  const documentUrl = buildPublicContextDocumentUrl(scope, scopeId);
+  const documentName = scope === "domain"
+    ? `My Choice Domain Context - ${scopeId}`
+    : `My Choice Personal Context - User ${scopeId}`;
+  const tags = [
+    "my-choice",
+    scope,
+    `domain:${slugify(domain || scopeId)}`
+  ];
+
+  let tavusResponse;
+  let data = {};
+
+  try {
+    tavusResponse = await fetch("https://tavusapi.com/v2/documents", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-api-key": tavusApiKey
+      },
+      body: JSON.stringify({
+        document_url: documentUrl,
+        document_name: documentName,
+        tags
+      })
+    });
+    data = await tavusResponse.json().catch(() => ({}));
+  } catch (error) {
+    data = { error: error instanceof Error ? error.message : "Tavus document upload failed" };
+  }
+
+  const documentId = cleanValue(data.document_id || data.id);
+  const ok = Boolean(tavusResponse?.ok);
+
+  await db.upsertTavusDocumentSync({
+    scope,
+    scopeId,
+    domain,
+    documentName,
+    documentUrl,
+    documentId,
+    tags,
+    status: ok ? "uploaded" : "failed",
+    contentHash,
+    metadata: { tavus_response: data, http_status: tavusResponse?.status || 0 },
+    syncedAt: now,
+    now
+  });
+}
+
+async function buildDomainContextDocument(domain) {
+  const normalizedDomain = normalizeDomain(domain);
+  const sharedContext = await db.get(`
+    SELECT context_text, source_json, updated_at
+    FROM domain_shared_contexts
+    WHERE domain = ?
+  `, [normalizedDomain]);
+
+  if (!sharedContext) {
+    return "";
+  }
+
+  const concepts = await db.all(`
+    SELECT domain, concept_key, label, concept_type, description
+    FROM domain_udm_concepts
+    WHERE domain IN ('Core', ?)
+    ORDER BY domain, concept_type, label
+  `, [normalizedDomain]);
+  const relationships = await db.all(`
+    SELECT domain, source_concept_key, relationship_type, target_concept_key, description
+    FROM domain_udm_relationships
+    WHERE domain IN ('Core', ?)
+    ORDER BY domain, source_concept_key
+  `, [normalizedDomain]);
+  const cases = await db.all(`
+    SELECT use_case, title, decision_statement, pattern_summary, signals_json,
+           constraints_json, actions_json, outcomes_json
+    FROM decision_cases
+    WHERE domain = ?
+    ORDER BY updated_at DESC, id DESC
+    LIMIT 20
+  `, [normalizedDomain]);
+
+  return [
+    `My Choice Shared Domain Context`,
+    `Domain: ${normalizedDomain}`,
+    `Updated: ${sharedContext.updated_at}`,
+    ``,
+    `Purpose`,
+    sharedContext.context_text,
+    ``,
+    `Interviewer Guidance`,
+    `Use this context to ask targeted questions that uncover real decision expertise. Ask for examples, signals, constraints, options, tradeoffs, actions, outcomes, and what the person learned.`,
+    ``,
+    `Core + Domain Concepts`,
+    ...concepts.map((concept) => `- ${concept.label} (${concept.concept_type}): ${concept.description || concept.concept_key}`),
+    ``,
+    `Relationships`,
+    ...relationships.map((relationship) => `- ${relationship.source_concept_key} ${relationship.relationship_type} ${relationship.target_concept_key}: ${relationship.description || ""}`),
+    ``,
+    `Extracted Decision Patterns`,
+    ...(cases.length
+      ? cases.map((item) => {
+          const signals = parseJson(item.signals_json, []).join(", ");
+          const constraints = parseJson(item.constraints_json, []).join(", ");
+          const actions = parseJson(item.actions_json, []).join(", ");
+          return `- ${item.use_case}: ${item.pattern_summary || item.decision_statement || item.title}. Signals: ${signals}. Constraints: ${constraints}. Actions: ${actions}.`;
+        })
+      : ["- No extracted interview patterns yet. Use the UDM and shared context to ask discovery questions."])
+  ].join("\n");
+}
+
+async function buildUserContextDocument(userId) {
+  const user = await getUserById(userId);
+
+  if (!user) {
+    return "";
+  }
+
+  const transcripts = await getUserTranscriptContext(user.id);
+  const cases = await db.all(`
+    SELECT domain, use_case, title, pattern_summary, context_summary, updated_at
+    FROM decision_cases
+    WHERE user_id = ?
+    ORDER BY updated_at DESC, id DESC
+    LIMIT 20
+  `, [user.id]);
+
+  return [
+    `My Choice Personal Interview Context`,
+    `User: ${user.name || user.email}`,
+    `Domain: ${normalizeDomain(user.domain)}`,
+    `LinkedIn: ${user.linkedIn || "not provided"}`,
+    `Resume file: ${user.resumeFileName || "not provided"}`,
+    ``,
+    `Personal Context`,
+    user.personalContext || "No personal notes provided.",
+    ``,
+    `Future Direction`,
+    user.futureDirection || "No future direction provided.",
+    ``,
+    `Resume Text`,
+    user.resumeText ? user.resumeText.slice(0, 8000) : "Resume file stored; text extraction unavailable for this file type.",
+    ``,
+    `Previous Interview Decision Cases`,
+    ...(cases.length
+      ? cases.map((item) => `- ${item.domain} / ${item.use_case}: ${item.pattern_summary || item.context_summary || item.title}`)
+      : ["- No decision cases extracted yet."]),
+    ``,
+    `Recent Transcript Evidence`,
+    ...(transcripts.length
+      ? transcripts.slice(-30).map((turn) => `- ${turn.speaker || turn.speaker_role || "speaker"}: ${turn.text}`)
+      : ["- No transcript evidence captured yet."])
+  ].join("\n");
+}
+
+function buildPublicContextDocumentUrl(scope, scopeId) {
+  const base = publicCallbackBaseUrl.replace(/\/$/, "");
+  const token = getTavusDocumentToken(scope, scopeId);
+  return `${base}/context-documents/${scope}/${encodeURIComponent(scopeId)}.txt?token=${encodeURIComponent(token)}`;
+}
+
+function getTavusDocumentToken(scope, scopeId) {
+  const secret = cleanEnvValue(process.env.TAVUS_DOCUMENT_ACCESS_TOKEN || tavusApiKey || googleClientId || "my-choice-local");
+  return crypto
+    .createHmac("sha256", secret)
+    .update(`${scope}:${scopeId}`)
+    .digest("hex");
 }
 
 function hasInterviewProfile(user) {
@@ -765,6 +1159,8 @@ async function getUserTranscriptContext(userId) {
     FROM conversation_transcripts t
     JOIN interview_sessions i ON i.id = t.session_id
     WHERE i.user_id = ?
+      AND LOWER(COALESCE(t.speaker, '')) <> 'system'
+      AND LOWER(COALESCE(t.speaker_role, '')) <> 'system'
     ORDER BY t.created_at ASC, t.id ASC
     LIMIT 80
   `, [userId]);
@@ -1123,6 +1519,385 @@ async function storeStructuredOutput(sessionId, domain, transcript) {
   );
 }
 
+async function seedDomainUdm() {
+  const now = new Date().toISOString();
+  const sharedContexts = getSeedSharedDomainContexts(now);
+  const concepts = getSeedDomainConcepts(now);
+  const relationships = getSeedDomainRelationships(now);
+
+  for (const context of sharedContexts) {
+    await db.upsertSharedDomainContext(context);
+  }
+
+  for (const concept of concepts) {
+    await db.upsertDomainConcept(concept);
+  }
+
+  for (const relationship of relationships) {
+    await db.upsertDomainRelationship(relationship);
+  }
+}
+
+async function rebuildDecisionKnowledgeForExistingSessions() {
+  const sessions = await db.all(`
+    SELECT id
+    FROM interview_sessions
+    WHERE status IN ('active', 'ended', 'transcribed')
+    ORDER BY id DESC
+    LIMIT 100
+  `);
+
+  for (const session of sessions) {
+    await extractDecisionKnowledgeForSession(session.id);
+  }
+}
+
+async function extractDecisionKnowledgeForSession(sessionId) {
+  const session = await db.get(`
+    SELECT id, user_id, domain, created_at
+    FROM interview_sessions
+    WHERE id = ?
+  `, [sessionId]);
+
+  if (!session) {
+    return;
+  }
+
+  const turns = await db.all(`
+    SELECT id, speaker, speaker_role, text, created_at
+    FROM conversation_transcripts
+    WHERE session_id = ?
+      AND LOWER(COALESCE(speaker, '')) <> 'system'
+      AND LOWER(COALESCE(speaker_role, '')) <> 'system'
+    ORDER BY COALESCE(turn_index, id), id
+  `, [sessionId]);
+  const displayTurns = turns.filter((turn) => isKnowledgeEvidenceText(turn.text));
+
+  if (!displayTurns.length) {
+    return;
+  }
+
+  const cases = buildDecisionCasesFromTranscript(session, displayTurns);
+
+  for (const decisionCase of cases) {
+    const result = await db.upsertDecisionCase(decisionCase);
+    const caseId = result.lastInsertRowid || await db.getDecisionCaseId(
+      decisionCase.sessionId,
+      decisionCase.domain,
+      decisionCase.useCase
+    );
+
+    if (caseId) {
+      await db.replaceDecisionEvidence(caseId, decisionCase.evidenceTurnIds);
+      await db.replaceDecisionEntities(caseId, decisionCase.entities);
+    }
+  }
+
+  const user = await getUserById(session.user_id);
+
+  if (user) {
+    await syncContextForTavus(user);
+  }
+}
+
+function isKnowledgeEvidenceText(value) {
+  const text = cleanValue(value).toLowerCase();
+
+  if (!text) {
+    return false;
+  }
+
+  return !(
+    text.startsWith("you are an interviewer") ||
+    text.includes("this is a my choice decision capture session") ||
+    text.includes("the signed-in user's email") ||
+    text.includes("conversation context")
+  );
+}
+
+function buildDecisionCasesFromTranscript(session, turns) {
+  const domain = normalizeDomain(session.domain);
+  const domainModel = getDomainDecisionModel(domain);
+  const transcriptText = turns.map((turn) => turn.text).join(" ");
+  const normalizedText = transcriptText.toLowerCase();
+  const matchedUseCases = domainModel.useCases
+    .filter((useCase) => useCase.keywords.some((keyword) => normalizedText.includes(keyword)))
+    .slice(0, 4);
+  const selectedUseCases = matchedUseCases.length ? matchedUseCases : domainModel.useCases.slice(0, 2);
+  const evidenceTurnIds = turns.slice(0, 12).map((turn) => turn.id);
+
+  return selectedUseCases.map((useCase) => {
+    const evidence = turns
+      .filter((turn) => useCase.keywords.some((keyword) => turn.text.toLowerCase().includes(keyword)))
+      .slice(0, 4);
+    const selectedEvidence = evidence.length ? evidence : turns.slice(0, 4);
+    const evidenceText = selectedEvidence.map((turn) => turn.text).join(" ").slice(0, 1200);
+    const signals = pickSignals(evidenceText, useCase.signals);
+    const constraints = pickSignals(evidenceText, useCase.constraints);
+    const actions = pickSignals(evidenceText, useCase.actions);
+
+    return {
+      sessionId: session.id,
+      userId: session.user_id,
+      domain,
+      useCase: useCase.name,
+      title: useCase.title,
+      decisionStatement: useCase.decision,
+      contextSummary: evidenceText || `Decision context captured for ${useCase.name}.`,
+      signals,
+      constraints,
+      options: useCase.options,
+      tradeoffs: useCase.tradeoffs,
+      actions,
+      outcomes: useCase.outcomes,
+      patternSummary: useCase.pattern,
+      confidence: evidence.length ? "medium" : "draft",
+      evidenceTurnIds: selectedEvidence.map((turn) => turn.id).length
+        ? selectedEvidence.map((turn) => turn.id)
+        : evidenceTurnIds,
+      entities: useCase.entities
+    };
+  });
+}
+
+function pickSignals(text, fallback) {
+  const normalized = cleanValue(text).toLowerCase();
+  const matches = fallback.filter((item) => {
+    const words = item.toLowerCase().split(/\W+/).filter((word) => word.length > 4);
+    return words.some((word) => normalized.includes(word));
+  });
+
+  return matches.length ? matches : fallback.slice(0, 3);
+}
+
+function normalizeDomain(domain) {
+  if (domain === "Financial") {
+    return "Financial Management";
+  }
+
+  return domain || "Property Management";
+}
+
+function getDomainDecisionModel(domain) {
+  if (domain === "Financial Management") {
+    return {
+      useCases: [
+        {
+          name: "Budget Variance Review",
+          title: "Explain and respond to budget variance",
+          decision: "Decide which variance drivers require investigation, escalation, or corrective action.",
+          keywords: ["budget", "variance", "forecast", "actual", "expense", "revenue", "margin"],
+          signals: ["Budget versus actual movement", "Forecast accuracy", "Expense trend", "Revenue change"],
+          constraints: ["Reporting deadline", "Data quality", "Business risk", "Cash impact"],
+          options: ["Investigate driver", "Adjust forecast", "Escalate to owner", "Monitor next period"],
+          tradeoffs: ["Speed versus accuracy", "Cost control versus growth investment"],
+          actions: ["Create variance narrative", "Request supporting data", "Update forecast assumptions"],
+          outcomes: ["Clearer executive decision support", "Earlier risk detection", "Improved planning discipline"],
+          pattern: "Experienced financial operators convert variance signals into a clear driver, risk, and next action.",
+          entities: ["Budget", "Forecast", "Variance", "Revenue", "Expense"]
+        },
+        {
+          name: "Management Reporting",
+          title: "Turn financial data into executive narrative",
+          decision: "Decide what leaders need to know from financial performance and what action should follow.",
+          keywords: ["report", "monthly", "dashboard", "executive", "kpi", "performance", "summary"],
+          signals: ["KPI movement", "Trend direction", "Threshold breach", "Stakeholder concern"],
+          constraints: ["Executive attention", "Materiality", "Timeliness", "Confidence in source data"],
+          options: ["Summarize performance", "Highlight risk", "Recommend action", "Request deeper analysis"],
+          tradeoffs: ["Completeness versus readability", "Precision versus speed"],
+          actions: ["Prepare executive summary", "Call out risks", "Define follow-up questions"],
+          outcomes: ["Faster leadership alignment", "Better prioritization", "Reusable report pattern"],
+          pattern: "Strong finance reporting compresses complex data into decision-ready signals and actions.",
+          entities: ["Report", "KPI", "ExecutiveSummary", "Risk", "Action"]
+        }
+      ]
+    };
+  }
+
+  return {
+    useCases: [
+      {
+        name: "Maintenance Triage",
+        title: "Prioritize and route maintenance requests",
+        decision: "Decide whether a maintenance issue is emergency, urgent, routine, or owner-approved work.",
+        keywords: ["maintenance", "repair", "vendor", "tenant", "emergency", "plumber", "hvac", "leak"],
+        signals: ["Tenant impact", "Property damage risk", "Urgency", "Vendor availability"],
+        constraints: ["Owner approval threshold", "Response time", "Cost", "Liability"],
+        options: ["Dispatch emergency vendor", "Schedule routine repair", "Request owner approval", "Ask tenant for more detail"],
+        tradeoffs: ["Fast response versus cost control", "Tenant satisfaction versus owner budget"],
+        actions: ["Classify request", "Notify tenant", "Assign vendor", "Document owner communication"],
+        outcomes: ["Reduced escalation", "Lower property damage risk", "Clear vendor workflow"],
+        pattern: "Expert operators triage maintenance by impact, risk, authority, and speed before choosing the next action.",
+        entities: ["MaintenanceRequest", "Tenant", "Vendor", "Owner", "Property"]
+      },
+      {
+        name: "Tenant Communication",
+        title: "Resolve tenant issues with clear communication",
+        decision: "Decide what message, tone, and next step should be sent to the tenant.",
+        keywords: ["tenant", "communication", "message", "complaint", "renewal", "lease", "notice"],
+        signals: ["Tenant sentiment", "Lease status", "Issue severity", "Response history"],
+        constraints: ["Fair housing compliance", "Tone", "Documentation", "Response time"],
+        options: ["Send update", "Escalate to manager", "Request documentation", "Offer resolution path"],
+        tradeoffs: ["Empathy versus policy enforcement", "Speed versus completeness"],
+        actions: ["Draft tenant response", "Log communication", "Set follow-up date"],
+        outcomes: ["Better tenant trust", "Lower confusion", "Reduced repeated contacts"],
+        pattern: "Strong property teams communicate next steps clearly while preserving compliance and documentation.",
+        entities: ["Tenant", "Lease", "Communication", "ComplianceIssue", "FollowUp"]
+      },
+      {
+        name: "Owner Reporting",
+        title: "Translate operations into owner decisions",
+        decision: "Decide what operational facts owners need to approve spend, understand risk, or evaluate performance.",
+        keywords: ["owner", "report", "investor", "approval", "expense", "rent", "vacancy"],
+        signals: ["Vacancy rate", "Repair cost", "Rent collection", "Portfolio performance"],
+        constraints: ["Owner budget", "Approval threshold", "Profitability", "Market conditions"],
+        options: ["Recommend approval", "Delay spend", "Provide alternatives", "Escalate risk"],
+        tradeoffs: ["Asset protection versus short-term cash", "Occupancy versus rent growth"],
+        actions: ["Summarize facts", "Recommend decision", "Attach evidence"],
+        outcomes: ["Faster owner approval", "Improved transparency", "Reusable reporting pattern"],
+        pattern: "Owner-ready reporting connects operational events to investment decisions and risk.",
+        entities: ["Owner", "Property", "Expense", "Vacancy", "Report"]
+      }
+    ]
+  };
+}
+
+function getSeedSharedDomainContexts(now) {
+  return [
+    {
+      domain: "Property Management",
+      contextText:
+        "Property Management shared context covers tenant communication, maintenance triage, owner reporting, leasing, rent collection, vendor coordination, compliance, vacancy, marketing, and operational decision-making. Interviews should discover how experienced operators prioritize urgent issues, balance tenant satisfaction with owner economics, evaluate vendors, communicate risk, and decide when to escalate.",
+      sourceJson: JSON.stringify({
+        source: "seed",
+        interviewUse:
+          "Ask targeted questions about maintenance workflows, owner approvals, tenant communication, vacancy, compliance, software, and operational tradeoffs.",
+        graphUse:
+          "Map transcript evidence into decisions, signals, constraints, options, tradeoffs, actions, outcomes, and reusable property-management patterns."
+      }),
+      now
+    },
+    {
+      domain: "Financial Management",
+      contextText:
+        "Financial Management shared context covers budget versus actuals, variance explanation, forecasting, reporting, cash flow, risk, approvals, KPI interpretation, executive summaries, and decision support. Interviews should discover how finance operators decide what matters, explain drivers, manage uncertainty, escalate risks, and turn data into recommendations.",
+      sourceJson: JSON.stringify({
+        source: "seed",
+        interviewUse:
+          "Ask targeted questions about variance drivers, reporting cadence, forecast assumptions, risk thresholds, stakeholder decisions, and financial narratives.",
+        graphUse:
+          "Map transcript evidence into finance decisions, signals, constraints, options, tradeoffs, actions, outcomes, and reusable financial-management patterns."
+      }),
+      now
+    }
+  ];
+}
+
+function getSeedDomainConcepts(now) {
+  const core = [
+    ["decision", "Decision", "primitive", "A judgment or choice made under business context.", true],
+    ["context", "Context", "primitive", "The surrounding facts, goals, constraints, and background.", true],
+    ["signal", "Signal", "primitive", "An observed indicator used to guide a decision.", true],
+    ["constraint", "Constraint", "primitive", "A limitation, rule, resource boundary, deadline, or risk.", true],
+    ["option", "Option", "primitive", "A possible path or response.", true],
+    ["tradeoff", "Tradeoff", "primitive", "The cost, benefit, or tension between options.", true],
+    ["action", "Action", "primitive", "The operational step taken after a decision.", true],
+    ["outcome", "Outcome", "primitive", "The result or expected result of the action.", true],
+    ["pattern", "Pattern", "primitive", "A reusable decision-making lesson extracted across interviews.", true],
+    ["evidence", "Evidence", "primitive", "A raw transcript turn or artifact supporting a structured object.", true]
+  ].map(([key, label, type, description, shared]) => ({
+    domain: "Core",
+    key,
+    label,
+    type,
+    description,
+    shared,
+    now
+  }));
+
+  const property = [
+    ["property", "Property", "entity", "A managed building, unit, or portfolio asset."],
+    ["tenant", "Tenant", "entity", "Resident or renter who creates communication and service needs."],
+    ["owner", "Owner", "entity", "Property owner or investor who approves spend and evaluates performance."],
+    ["vendor", "Vendor", "entity", "External trade or service provider."],
+    ["maintenance_request", "Maintenance Request", "workflow", "Repair or service issue requiring triage and routing."],
+    ["lease", "Lease", "entity", "Contract governing tenant obligations, renewals, notices, and compliance."],
+    ["rent_payment", "Rent Payment", "workflow", "Rent collection, delinquency, late payment, and escalation process."],
+    ["vacancy", "Vacancy", "signal", "Unoccupied unit or portfolio gap affecting revenue and marketing."],
+    ["inspection", "Inspection", "workflow", "Property condition review and risk detection process."],
+    ["compliance_issue", "Compliance Issue", "constraint", "Legal, fair housing, notice, eviction, or jurisdictional requirement."],
+    ["lead", "Lead", "entity", "Potential tenant or owner customer."],
+    ["marketing_channel", "Marketing Channel", "entity", "Source of demand for tenants, owners, or investors."]
+  ].map(([key, label, type, description]) => ({
+    domain: "Property Management",
+    key,
+    label,
+    type,
+    description,
+    shared: false,
+    now
+  }));
+
+  const financial = [
+    ["budget", "Budget", "entity", "Planned financial baseline."],
+    ["forecast", "Forecast", "entity", "Expected future financial performance."],
+    ["variance", "Variance", "signal", "Difference between actuals and plan or forecast."],
+    ["revenue", "Revenue", "metric", "Income generated by the business."],
+    ["expense", "Expense", "metric", "Cost category affecting profitability and cash."],
+    ["cash_flow", "Cash Flow", "metric", "Timing and availability of cash."],
+    ["kpi", "KPI", "metric", "Key performance indicator used to guide decisions."],
+    ["report", "Report", "artifact", "Recurring financial analysis or dashboard."],
+    ["risk", "Risk", "constraint", "Potential negative financial or operational exposure."],
+    ["executive_summary", "Executive Summary", "artifact", "Decision-ready narrative for leadership."],
+    ["scenario", "Scenario", "option", "Potential forecast, plan, or business case."],
+    ["approval", "Approval", "workflow", "Authorization step for spend, forecast, budget, or action."]
+  ].map(([key, label, type, description]) => ({
+    domain: "Financial Management",
+    key,
+    label,
+    type,
+    description,
+    shared: false,
+    now
+  }));
+
+  return [...core, ...property, ...financial];
+}
+
+function getSeedDomainRelationships(now) {
+  const rows = [
+    ["Core", "decision", "has_context", "context", "Every decision is interpreted inside business context."],
+    ["Core", "decision", "uses_signal", "signal", "Signals help determine the right decision path."],
+    ["Core", "decision", "constrained_by", "constraint", "Constraints shape which options are realistic."],
+    ["Core", "decision", "considers", "option", "Decisions compare possible options."],
+    ["Core", "decision", "requires_tradeoff", "tradeoff", "Expert decisions expose tradeoffs."],
+    ["Core", "decision", "produces", "outcome", "Decisions create measurable or expected outcomes."],
+    ["Core", "action", "supported_by", "evidence", "Actions should link back to transcript evidence."],
+    ["Core", "pattern", "supported_by", "evidence", "Patterns are only trusted when evidence-backed."],
+    ["Property Management", "tenant", "reports", "maintenance_request", "Tenants often initiate maintenance workflows."],
+    ["Property Management", "maintenance_request", "assigned_to", "vendor", "Maintenance requests are routed to vendors."],
+    ["Property Management", "owner", "approves", "expense", "Owners may approve cost-sensitive decisions."],
+    ["Property Management", "property", "has_signal", "vacancy", "Vacancy is a portfolio performance signal."],
+    ["Property Management", "lease", "constrained_by", "compliance_issue", "Lease decisions must respect compliance."],
+    ["Property Management", "marketing_channel", "generates", "lead", "Marketing channels create tenant or owner leads."],
+    ["Financial Management", "budget", "compared_to", "forecast", "Budget and forecast create planning context."],
+    ["Financial Management", "variance", "affects", "kpi", "Variance movement changes KPIs and narratives."],
+    ["Financial Management", "report", "summarizes", "kpi", "Reports translate KPIs into decisions."],
+    ["Financial Management", "risk", "constrained_by", "cash_flow", "Cash position changes risk decisions."],
+    ["Financial Management", "executive_summary", "recommends", "action", "Executive summaries should drive next action."],
+    ["Financial Management", "scenario", "requires", "approval", "Scenario choices can require authorization."]
+  ];
+
+  return rows.map(([domain, source, type, target, description]) => ({
+    domain,
+    source,
+    type,
+    target,
+    description,
+    now
+  }));
+}
+
 function buildStructuredDomainOutput(domain, turns) {
   const transcriptText = turns
     .map((turn) => `${turn.speaker}: ${turn.text}`)
@@ -1467,6 +2242,107 @@ function openSqliteDatabase(filePath) {
     );
 
     CREATE INDEX IF NOT EXISTS idx_structured_outputs_session_id ON structured_interview_outputs(session_id);
+
+    CREATE TABLE IF NOT EXISTS domain_shared_contexts (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      domain TEXT NOT NULL UNIQUE,
+      context_text TEXT NOT NULL,
+      source_json TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS domain_udm_concepts (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      domain TEXT NOT NULL,
+      concept_key TEXT NOT NULL,
+      label TEXT NOT NULL,
+      concept_type TEXT NOT NULL,
+      description TEXT,
+      shared_flag INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      UNIQUE(domain, concept_key)
+    );
+
+    CREATE TABLE IF NOT EXISTS domain_udm_relationships (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      domain TEXT NOT NULL,
+      source_concept_key TEXT NOT NULL,
+      relationship_type TEXT NOT NULL,
+      target_concept_key TEXT NOT NULL,
+      description TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      UNIQUE(domain, source_concept_key, relationship_type, target_concept_key)
+    );
+
+    CREATE TABLE IF NOT EXISTS decision_cases (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      session_id INTEGER NOT NULL,
+      user_id INTEGER NOT NULL,
+      domain TEXT NOT NULL,
+      use_case TEXT NOT NULL,
+      title TEXT NOT NULL,
+      decision_statement TEXT,
+      context_summary TEXT,
+      signals_json TEXT,
+      constraints_json TEXT,
+      options_json TEXT,
+      tradeoffs_json TEXT,
+      actions_json TEXT,
+      outcomes_json TEXT,
+      pattern_summary TEXT,
+      confidence TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      UNIQUE(session_id, domain, use_case),
+      FOREIGN KEY (session_id) REFERENCES interview_sessions(id) ON DELETE CASCADE,
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS decision_case_entities (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      decision_case_id INTEGER NOT NULL,
+      entity_key TEXT NOT NULL,
+      role TEXT,
+      created_at TEXT NOT NULL,
+      FOREIGN KEY (decision_case_id) REFERENCES decision_cases(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS evidence_links (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      decision_case_id INTEGER NOT NULL,
+      transcript_turn_id INTEGER NOT NULL,
+      evidence_type TEXT,
+      created_at TEXT NOT NULL,
+      UNIQUE(decision_case_id, transcript_turn_id),
+      FOREIGN KEY (decision_case_id) REFERENCES decision_cases(id) ON DELETE CASCADE,
+      FOREIGN KEY (transcript_turn_id) REFERENCES conversation_transcripts(id) ON DELETE CASCADE
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_decision_cases_domain ON decision_cases(domain);
+    CREATE INDEX IF NOT EXISTS idx_decision_cases_user_id ON decision_cases(user_id);
+
+    CREATE TABLE IF NOT EXISTS tavus_document_syncs (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      scope TEXT NOT NULL,
+      scope_id TEXT NOT NULL,
+      domain TEXT,
+      document_name TEXT NOT NULL,
+      document_url TEXT NOT NULL,
+      document_id TEXT,
+      tags_json TEXT,
+      status TEXT NOT NULL,
+      content_hash TEXT NOT NULL,
+      metadata_json TEXT,
+      synced_at TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      UNIQUE(scope, scope_id, content_hash)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_tavus_document_syncs_scope ON tavus_document_syncs(scope, scope_id);
   `);
   ensureColumn(database, "users", "first_name", "TEXT");
   ensureColumn(database, "users", "last_name", "TEXT");
@@ -1615,12 +2491,214 @@ class SqliteAdapter {
     `, [sessionId, domain, schemaVersion, structuredJson, confidenceJson, createdAt, updatedAt]);
   }
 
+  upsertSharedDomainContext(context) {
+    return this.run(`
+      INSERT INTO domain_shared_contexts (domain, context_text, source_json, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?)
+      ON CONFLICT(domain) DO UPDATE SET
+        context_text = excluded.context_text,
+        source_json = excluded.source_json,
+        updated_at = excluded.updated_at
+    `, [context.domain, context.contextText, context.sourceJson, context.now, context.now]);
+  }
+
+  upsertDomainConcept(concept) {
+    return this.run(`
+      INSERT INTO domain_udm_concepts (
+        domain, concept_key, label, concept_type, description, shared_flag, created_at, updated_at
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(domain, concept_key) DO UPDATE SET
+        label = excluded.label,
+        concept_type = excluded.concept_type,
+        description = excluded.description,
+        shared_flag = excluded.shared_flag,
+        updated_at = excluded.updated_at
+    `, [
+      concept.domain,
+      concept.key,
+      concept.label,
+      concept.type,
+      concept.description,
+      concept.shared ? 1 : 0,
+      concept.now,
+      concept.now
+    ]);
+  }
+
+  upsertDomainRelationship(relationship) {
+    return this.run(`
+      INSERT INTO domain_udm_relationships (
+        domain, source_concept_key, relationship_type, target_concept_key, description, created_at, updated_at
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(domain, source_concept_key, relationship_type, target_concept_key) DO UPDATE SET
+        description = excluded.description,
+        updated_at = excluded.updated_at
+    `, [
+      relationship.domain,
+      relationship.source,
+      relationship.type,
+      relationship.target,
+      relationship.description,
+      relationship.now,
+      relationship.now
+    ]);
+  }
+
+  upsertDecisionCase(decisionCase) {
+    const now = new Date().toISOString();
+
+    return this.run(`
+      INSERT INTO decision_cases (
+        session_id, user_id, domain, use_case, title, decision_statement,
+        context_summary, signals_json, constraints_json, options_json,
+        tradeoffs_json, actions_json, outcomes_json, pattern_summary,
+        confidence, created_at, updated_at
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(session_id, domain, use_case) DO UPDATE SET
+        title = excluded.title,
+        decision_statement = excluded.decision_statement,
+        context_summary = excluded.context_summary,
+        signals_json = excluded.signals_json,
+        constraints_json = excluded.constraints_json,
+        options_json = excluded.options_json,
+        tradeoffs_json = excluded.tradeoffs_json,
+        actions_json = excluded.actions_json,
+        outcomes_json = excluded.outcomes_json,
+        pattern_summary = excluded.pattern_summary,
+        confidence = excluded.confidence,
+        updated_at = excluded.updated_at
+    `, [
+      decisionCase.sessionId,
+      decisionCase.userId,
+      decisionCase.domain,
+      decisionCase.useCase,
+      decisionCase.title,
+      decisionCase.decisionStatement,
+      decisionCase.contextSummary,
+      JSON.stringify(decisionCase.signals || []),
+      JSON.stringify(decisionCase.constraints || []),
+      JSON.stringify(decisionCase.options || []),
+      JSON.stringify(decisionCase.tradeoffs || []),
+      JSON.stringify(decisionCase.actions || []),
+      JSON.stringify(decisionCase.outcomes || []),
+      decisionCase.patternSummary,
+      decisionCase.confidence,
+      now,
+      now
+    ]);
+  }
+
+  getDecisionCaseId(sessionId, domain, useCase) {
+    const row = this.get(`
+      SELECT id
+      FROM decision_cases
+      WHERE session_id = ? AND domain = ? AND use_case = ?
+    `, [sessionId, domain, useCase]);
+
+    return row?.id || 0;
+  }
+
+  replaceDecisionEvidence(decisionCaseId, transcriptTurnIds) {
+    const now = new Date().toISOString();
+
+    this.run("DELETE FROM evidence_links WHERE decision_case_id = ?", [decisionCaseId]);
+
+    for (const turnId of transcriptTurnIds || []) {
+      this.run(`
+        INSERT OR IGNORE INTO evidence_links (
+          decision_case_id, transcript_turn_id, evidence_type, created_at
+        )
+        VALUES (?, ?, ?, ?)
+      `, [decisionCaseId, turnId, "transcript_turn", now]);
+    }
+  }
+
+  replaceDecisionEntities(decisionCaseId, entities) {
+    const now = new Date().toISOString();
+
+    this.run("DELETE FROM decision_case_entities WHERE decision_case_id = ?", [decisionCaseId]);
+
+    for (const entity of entities || []) {
+      const entityKey = typeof entity === "string" ? entity : entity.key;
+      const role = typeof entity === "string" ? "domain_entity" : entity.role || "domain_entity";
+
+      this.run(`
+        INSERT INTO decision_case_entities (decision_case_id, entity_key, role, created_at)
+        VALUES (?, ?, ?, ?)
+      `, [decisionCaseId, entityKey, role, now]);
+    }
+  }
+
+  upsertTavusDocumentSync(sync) {
+    return this.run(`
+      INSERT INTO tavus_document_syncs (
+        scope, scope_id, domain, document_name, document_url, document_id,
+        tags_json, status, content_hash, metadata_json, synced_at, created_at, updated_at
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(scope, scope_id, content_hash) DO UPDATE SET
+        domain = excluded.domain,
+        document_name = excluded.document_name,
+        document_url = excluded.document_url,
+        document_id = excluded.document_id,
+        tags_json = excluded.tags_json,
+        status = excluded.status,
+        metadata_json = excluded.metadata_json,
+        synced_at = excluded.synced_at,
+        updated_at = excluded.updated_at
+    `, [
+      sync.scope,
+      sync.scopeId,
+      sync.domain,
+      sync.documentName,
+      sync.documentUrl,
+      sync.documentId,
+      JSON.stringify(sync.tags || []),
+      sync.status,
+      sync.contentHash,
+      JSON.stringify(sync.metadata || {}),
+      sync.syncedAt,
+      sync.now,
+      sync.now
+    ]);
+  }
+
+  getLatestTavusDocumentSync(scope, scopeId) {
+    return this.get(`
+      SELECT *
+      FROM tavus_document_syncs
+      WHERE scope = ? AND scope_id = ?
+      ORDER BY updated_at DESC, id DESC
+      LIMIT 1
+    `, [scope, scopeId]);
+  }
+
+  listLatestTavusDocumentIds(scopePairs) {
+    const ids = [];
+
+    for (const pair of scopePairs) {
+      const row = this.getLatestTavusDocumentSync(pair.scope, pair.scopeId);
+
+      if (row?.document_id) {
+        ids.push(row.document_id);
+      }
+    }
+
+    return ids;
+  }
+
   getTableCounts() {
     return {
       users: Number(this.get("SELECT COUNT(*) AS count FROM users").count || 0),
       interviewSessions: Number(this.get("SELECT COUNT(*) AS count FROM interview_sessions").count || 0),
       transcriptTurns: Number(this.get("SELECT COUNT(*) AS count FROM conversation_transcripts").count || 0),
-      structuredOutputs: Number(this.get("SELECT COUNT(*) AS count FROM structured_interview_outputs").count || 0)
+      structuredOutputs: Number(this.get("SELECT COUNT(*) AS count FROM structured_interview_outputs").count || 0),
+      udmConcepts: Number(this.get("SELECT COUNT(*) AS count FROM domain_udm_concepts").count || 0),
+      decisionCases: Number(this.get("SELECT COUNT(*) AS count FROM decision_cases").count || 0),
+      tavusDocumentSyncs: Number(this.get("SELECT COUNT(*) AS count FROM tavus_document_syncs").count || 0)
     };
   }
 }
@@ -1742,6 +2820,103 @@ class MySqlAdapter {
         UNIQUE KEY unique_structured_output (session_id, domain, schema_version),
         INDEX idx_structured_outputs_session_id (session_id),
         CONSTRAINT fk_structured_outputs_session FOREIGN KEY (session_id) REFERENCES interview_sessions(id) ON DELETE CASCADE
+      )`,
+      `CREATE TABLE IF NOT EXISTS domain_shared_contexts (
+        id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+        domain VARCHAR(120) NOT NULL UNIQUE,
+        context_text LONGTEXT NOT NULL,
+        source_json LONGTEXT,
+        created_at VARCHAR(40) NOT NULL,
+        updated_at VARCHAR(40) NOT NULL
+      )`,
+      `CREATE TABLE IF NOT EXISTS domain_udm_concepts (
+        id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+        domain VARCHAR(120) NOT NULL,
+        concept_key VARCHAR(160) NOT NULL,
+        label VARCHAR(255) NOT NULL,
+        concept_type VARCHAR(120) NOT NULL,
+        description LONGTEXT,
+        shared_flag TINYINT NOT NULL DEFAULT 0,
+        created_at VARCHAR(40) NOT NULL,
+        updated_at VARCHAR(40) NOT NULL,
+        UNIQUE KEY unique_domain_concept (domain, concept_key),
+        INDEX idx_domain_udm_concepts_domain (domain)
+      )`,
+      `CREATE TABLE IF NOT EXISTS domain_udm_relationships (
+        id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+        domain VARCHAR(120) NOT NULL,
+        source_concept_key VARCHAR(160) NOT NULL,
+        relationship_type VARCHAR(160) NOT NULL,
+        target_concept_key VARCHAR(160) NOT NULL,
+        description LONGTEXT,
+        created_at VARCHAR(40) NOT NULL,
+        updated_at VARCHAR(40) NOT NULL,
+        UNIQUE KEY unique_domain_relationship (domain, source_concept_key, relationship_type, target_concept_key),
+        INDEX idx_domain_udm_relationships_domain (domain)
+      )`,
+      `CREATE TABLE IF NOT EXISTS decision_cases (
+        id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+        session_id INT NOT NULL,
+        user_id INT NOT NULL,
+        domain VARCHAR(120) NOT NULL,
+        use_case VARCHAR(160) NOT NULL,
+        title VARCHAR(255) NOT NULL,
+        decision_statement LONGTEXT,
+        context_summary LONGTEXT,
+        signals_json LONGTEXT,
+        constraints_json LONGTEXT,
+        options_json LONGTEXT,
+        tradeoffs_json LONGTEXT,
+        actions_json LONGTEXT,
+        outcomes_json LONGTEXT,
+        pattern_summary LONGTEXT,
+        confidence VARCHAR(80),
+        created_at VARCHAR(40) NOT NULL,
+        updated_at VARCHAR(40) NOT NULL,
+        UNIQUE KEY unique_decision_case (session_id, domain, use_case),
+        INDEX idx_decision_cases_domain (domain),
+        INDEX idx_decision_cases_user_id (user_id),
+        CONSTRAINT fk_decision_cases_session FOREIGN KEY (session_id) REFERENCES interview_sessions(id) ON DELETE CASCADE,
+        CONSTRAINT fk_decision_cases_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+      )`,
+      `CREATE TABLE IF NOT EXISTS decision_case_entities (
+        id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+        decision_case_id INT NOT NULL,
+        entity_key VARCHAR(160) NOT NULL,
+        role VARCHAR(120),
+        created_at VARCHAR(40) NOT NULL,
+        INDEX idx_decision_case_entities_case (decision_case_id),
+        CONSTRAINT fk_decision_case_entities_case FOREIGN KEY (decision_case_id) REFERENCES decision_cases(id) ON DELETE CASCADE
+      )`,
+      `CREATE TABLE IF NOT EXISTS evidence_links (
+        id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+        decision_case_id INT NOT NULL,
+        transcript_turn_id INT NOT NULL,
+        evidence_type VARCHAR(80),
+        created_at VARCHAR(40) NOT NULL,
+        UNIQUE KEY unique_evidence_link (decision_case_id, transcript_turn_id),
+        INDEX idx_evidence_links_case (decision_case_id),
+        INDEX idx_evidence_links_turn (transcript_turn_id),
+        CONSTRAINT fk_evidence_links_case FOREIGN KEY (decision_case_id) REFERENCES decision_cases(id) ON DELETE CASCADE,
+        CONSTRAINT fk_evidence_links_turn FOREIGN KEY (transcript_turn_id) REFERENCES conversation_transcripts(id) ON DELETE CASCADE
+      )`,
+      `CREATE TABLE IF NOT EXISTS tavus_document_syncs (
+        id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+        scope VARCHAR(80) NOT NULL,
+        scope_id VARCHAR(160) NOT NULL,
+        domain VARCHAR(120),
+        document_name VARCHAR(255) NOT NULL,
+        document_url TEXT NOT NULL,
+        document_id VARCHAR(255),
+        tags_json LONGTEXT,
+        status VARCHAR(80) NOT NULL,
+        content_hash VARCHAR(128) NOT NULL,
+        metadata_json LONGTEXT,
+        synced_at VARCHAR(40),
+        created_at VARCHAR(40) NOT NULL,
+        updated_at VARCHAR(40) NOT NULL,
+        UNIQUE KEY unique_tavus_document_sync (scope, scope_id, content_hash),
+        INDEX idx_tavus_document_syncs_scope (scope, scope_id)
       )`
     ];
 
@@ -1802,25 +2977,252 @@ class MySqlAdapter {
     `, [sessionId, domain, schemaVersion, structuredJson, confidenceJson, createdAt, updatedAt]);
   }
 
+  upsertSharedDomainContext(context) {
+    return this.run(`
+      INSERT INTO domain_shared_contexts (domain, context_text, source_json, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?)
+      ON DUPLICATE KEY UPDATE
+        context_text = VALUES(context_text),
+        source_json = VALUES(source_json),
+        updated_at = VALUES(updated_at)
+    `, [context.domain, context.contextText, context.sourceJson, context.now, context.now]);
+  }
+
+  upsertDomainConcept(concept) {
+    return this.run(`
+      INSERT INTO domain_udm_concepts (
+        domain, concept_key, label, concept_type, description, shared_flag, created_at, updated_at
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      ON DUPLICATE KEY UPDATE
+        label = VALUES(label),
+        concept_type = VALUES(concept_type),
+        description = VALUES(description),
+        shared_flag = VALUES(shared_flag),
+        updated_at = VALUES(updated_at)
+    `, [
+      concept.domain,
+      concept.key,
+      concept.label,
+      concept.type,
+      concept.description,
+      concept.shared ? 1 : 0,
+      concept.now,
+      concept.now
+    ]);
+  }
+
+  upsertDomainRelationship(relationship) {
+    return this.run(`
+      INSERT INTO domain_udm_relationships (
+        domain, source_concept_key, relationship_type, target_concept_key, description, created_at, updated_at
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+      ON DUPLICATE KEY UPDATE
+        description = VALUES(description),
+        updated_at = VALUES(updated_at)
+    `, [
+      relationship.domain,
+      relationship.source,
+      relationship.type,
+      relationship.target,
+      relationship.description,
+      relationship.now,
+      relationship.now
+    ]);
+  }
+
+  upsertDecisionCase(decisionCase) {
+    const now = new Date().toISOString();
+
+    return this.run(`
+      INSERT INTO decision_cases (
+        session_id, user_id, domain, use_case, title, decision_statement,
+        context_summary, signals_json, constraints_json, options_json,
+        tradeoffs_json, actions_json, outcomes_json, pattern_summary,
+        confidence, created_at, updated_at
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON DUPLICATE KEY UPDATE
+        title = VALUES(title),
+        decision_statement = VALUES(decision_statement),
+        context_summary = VALUES(context_summary),
+        signals_json = VALUES(signals_json),
+        constraints_json = VALUES(constraints_json),
+        options_json = VALUES(options_json),
+        tradeoffs_json = VALUES(tradeoffs_json),
+        actions_json = VALUES(actions_json),
+        outcomes_json = VALUES(outcomes_json),
+        pattern_summary = VALUES(pattern_summary),
+        confidence = VALUES(confidence),
+        updated_at = VALUES(updated_at)
+    `, [
+      decisionCase.sessionId,
+      decisionCase.userId,
+      decisionCase.domain,
+      decisionCase.useCase,
+      decisionCase.title,
+      decisionCase.decisionStatement,
+      decisionCase.contextSummary,
+      JSON.stringify(decisionCase.signals || []),
+      JSON.stringify(decisionCase.constraints || []),
+      JSON.stringify(decisionCase.options || []),
+      JSON.stringify(decisionCase.tradeoffs || []),
+      JSON.stringify(decisionCase.actions || []),
+      JSON.stringify(decisionCase.outcomes || []),
+      decisionCase.patternSummary,
+      decisionCase.confidence,
+      now,
+      now
+    ]);
+  }
+
+  async getDecisionCaseId(sessionId, domain, useCase) {
+    const row = await this.get(`
+      SELECT id
+      FROM decision_cases
+      WHERE session_id = ? AND domain = ? AND use_case = ?
+    `, [sessionId, domain, useCase]);
+
+    return row?.id || 0;
+  }
+
+  async replaceDecisionEvidence(decisionCaseId, transcriptTurnIds) {
+    const now = new Date().toISOString();
+
+    await this.run("DELETE FROM evidence_links WHERE decision_case_id = ?", [decisionCaseId]);
+
+    for (const turnId of transcriptTurnIds || []) {
+      await this.run(`
+        INSERT IGNORE INTO evidence_links (
+          decision_case_id, transcript_turn_id, evidence_type, created_at
+        )
+        VALUES (?, ?, ?, ?)
+      `, [decisionCaseId, turnId, "transcript_turn", now]);
+    }
+  }
+
+  async replaceDecisionEntities(decisionCaseId, entities) {
+    const now = new Date().toISOString();
+
+    await this.run("DELETE FROM decision_case_entities WHERE decision_case_id = ?", [decisionCaseId]);
+
+    for (const entity of entities || []) {
+      const entityKey = typeof entity === "string" ? entity : entity.key;
+      const role = typeof entity === "string" ? "domain_entity" : entity.role || "domain_entity";
+
+      await this.run(`
+        INSERT INTO decision_case_entities (decision_case_id, entity_key, role, created_at)
+        VALUES (?, ?, ?, ?)
+      `, [decisionCaseId, entityKey, role, now]);
+    }
+  }
+
+  upsertTavusDocumentSync(sync) {
+    return this.run(`
+      INSERT INTO tavus_document_syncs (
+        scope, scope_id, domain, document_name, document_url, document_id,
+        tags_json, status, content_hash, metadata_json, synced_at, created_at, updated_at
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON DUPLICATE KEY UPDATE
+        domain = VALUES(domain),
+        document_name = VALUES(document_name),
+        document_url = VALUES(document_url),
+        document_id = VALUES(document_id),
+        tags_json = VALUES(tags_json),
+        status = VALUES(status),
+        metadata_json = VALUES(metadata_json),
+        synced_at = VALUES(synced_at),
+        updated_at = VALUES(updated_at)
+    `, [
+      sync.scope,
+      sync.scopeId,
+      sync.domain,
+      sync.documentName,
+      sync.documentUrl,
+      sync.documentId,
+      JSON.stringify(sync.tags || []),
+      sync.status,
+      sync.contentHash,
+      JSON.stringify(sync.metadata || {}),
+      sync.syncedAt,
+      sync.now,
+      sync.now
+    ]);
+  }
+
+  async getLatestTavusDocumentSync(scope, scopeId) {
+    return this.get(`
+      SELECT *
+      FROM tavus_document_syncs
+      WHERE scope = ? AND scope_id = ?
+      ORDER BY updated_at DESC, id DESC
+      LIMIT 1
+    `, [scope, scopeId]);
+  }
+
+  async listLatestTavusDocumentIds(scopePairs) {
+    const ids = [];
+
+    for (const pair of scopePairs) {
+      const row = await this.getLatestTavusDocumentSync(pair.scope, pair.scopeId);
+
+      if (row?.document_id) {
+        ids.push(row.document_id);
+      }
+    }
+
+    return ids;
+  }
+
   async getTableCounts() {
-    const [users, interviewSessions, transcriptTurns, structuredOutputs] = await Promise.all([
+    const [
+      users,
+      interviewSessions,
+      transcriptTurns,
+      structuredOutputs,
+      udmConcepts,
+      decisionCases,
+      tavusDocumentSyncs
+    ] = await Promise.all([
       this.get("SELECT COUNT(*) AS count FROM users"),
       this.get("SELECT COUNT(*) AS count FROM interview_sessions"),
       this.get("SELECT COUNT(*) AS count FROM conversation_transcripts"),
-      this.get("SELECT COUNT(*) AS count FROM structured_interview_outputs")
+      this.get("SELECT COUNT(*) AS count FROM structured_interview_outputs"),
+      this.get("SELECT COUNT(*) AS count FROM domain_udm_concepts"),
+      this.get("SELECT COUNT(*) AS count FROM decision_cases"),
+      this.get("SELECT COUNT(*) AS count FROM tavus_document_syncs")
     ]);
 
     return {
       users: Number(users?.count || 0),
       interviewSessions: Number(interviewSessions?.count || 0),
       transcriptTurns: Number(transcriptTurns?.count || 0),
-      structuredOutputs: Number(structuredOutputs?.count || 0)
+      structuredOutputs: Number(structuredOutputs?.count || 0),
+      udmConcepts: Number(udmConcepts?.count || 0),
+      decisionCases: Number(decisionCases?.count || 0),
+      tavusDocumentSyncs: Number(tavusDocumentSyncs?.count || 0)
     };
   }
 }
 
 function cleanEnvValue(value) {
   return typeof value === "string" ? value.trim() : "";
+}
+
+function parseEnvList(value) {
+  return cleanEnvValue(value)
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function slugify(value) {
+  return cleanValue(value)
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "") || "general";
 }
 
 bootstrap().catch((error) => {

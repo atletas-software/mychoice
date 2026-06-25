@@ -42,6 +42,12 @@ const aiPathActions = document.querySelector("#aiPathActions");
 const bootcampTools = document.querySelector("#bootcampTools");
 const recordingsList = document.querySelector("#recordingsList");
 const recordingsStatus = document.querySelector("#recordingsStatus");
+const knowledgeDomainInput = document.querySelector("#knowledgeDomainInput");
+const knowledgeStatus = document.querySelector("#knowledgeStatus");
+const knowledgeSummaryGrid = document.querySelector("#knowledgeSummaryGrid");
+const knowledgeConcepts = document.querySelector("#knowledgeConcepts");
+const knowledgeRelationships = document.querySelector("#knowledgeRelationships");
+const knowledgeCases = document.querySelector("#knowledgeCases");
 
 let activeConversationId = "";
 let dailyCall = null;
@@ -104,6 +110,7 @@ recordingsList?.addEventListener("click", (event) => {
     loadInterviewDetail(recordingButton.dataset.interviewId || "");
   }
 });
+knowledgeDomainInput?.addEventListener("change", () => loadDecisionKnowledge());
 
 async function initializeApp() {
   showAuth();
@@ -240,6 +247,10 @@ function showWorkspaceSection(sectionName) {
 
   if (sectionName === "interview") {
     loadInterviewHistory();
+  }
+
+  if (sectionName === "knowledge") {
+    loadDecisionKnowledge();
   }
 }
 
@@ -935,6 +946,147 @@ function renderBootcampTools(tools) {
       return card;
     })
   );
+}
+
+async function loadDecisionKnowledge() {
+  if (!knowledgeStatus || !knowledgeDomainInput) {
+    return;
+  }
+
+  if (!currentUser) {
+    renderDecisionKnowledge(null);
+    return;
+  }
+
+  const domain = knowledgeDomainInput.value || currentUser.domain || "Property Management";
+  knowledgeStatus.textContent = "Loading decision knowledge...";
+
+  try {
+    const response = await fetch(`/api/knowledge?domain=${encodeURIComponent(domain)}`);
+    const data = await response.json().catch(() => ({}));
+
+    if (!response.ok) {
+      throw new Error(data.error || "Unable to load decision knowledge.");
+    }
+
+    renderDecisionKnowledge(data);
+  } catch (error) {
+    knowledgeStatus.textContent =
+      error instanceof Error ? error.message : "Unable to load decision knowledge.";
+    knowledgeStatus.dataset.state = "error";
+  }
+}
+
+function renderDecisionKnowledge(data) {
+  if (!knowledgeSummaryGrid || !knowledgeConcepts || !knowledgeRelationships || !knowledgeCases || !knowledgeStatus) {
+    return;
+  }
+
+  knowledgeSummaryGrid.replaceChildren();
+  knowledgeConcepts.replaceChildren();
+  knowledgeRelationships.replaceChildren();
+  knowledgeCases.replaceChildren();
+
+  if (!data) {
+    knowledgeStatus.textContent = "Sign in to view the Decisions Knowledge layer.";
+    return;
+  }
+
+  const concepts = data.concepts || [];
+  const relationships = data.relationships || [];
+  const cases = data.decisionCases || [];
+
+  knowledgeStatus.dataset.state = "info";
+  knowledgeStatus.textContent =
+    `${data.domain} uses a shared decision spine plus a domain-specific UDM module.`;
+
+  knowledgeSummaryGrid.replaceChildren(
+    createKnowledgeMetric("UDM concepts", concepts.length),
+    createKnowledgeMetric("Graph links", relationships.length),
+    createKnowledgeMetric("Decision cases", cases.length),
+    createKnowledgeMetric("Model", "Shared + Domain")
+  );
+
+  knowledgeConcepts.replaceChildren(
+    ...(concepts.length
+      ? concepts.map((concept) => createKnowledgeListItem(
+          concept.label,
+          `${concept.domain} / ${concept.type}`,
+          concept.description || concept.key
+        ))
+      : [createKnowledgeEmpty("No UDM concepts found for this domain yet.")])
+  );
+
+  knowledgeRelationships.replaceChildren(
+    ...(relationships.length
+      ? relationships.map((relationship) => createKnowledgeListItem(
+          `${relationship.source} -> ${relationship.target}`,
+          `${relationship.domain} / ${relationship.type}`,
+          relationship.description || "Semantic relationship"
+        ))
+      : [createKnowledgeEmpty("No graph relationships found for this domain yet.")])
+  );
+
+  knowledgeCases.replaceChildren(
+    ...(cases.length
+      ? cases.map(createDecisionCaseCard)
+      : [createKnowledgeEmpty("No decision cases extracted yet. Complete interviews to grow this domain layer.")])
+  );
+}
+
+function createKnowledgeMetric(label, value) {
+  const item = document.createElement("article");
+  item.className = "knowledge-metric";
+  item.innerHTML = `
+    <span>${escapeHtml(label)}</span>
+    <strong>${escapeHtml(value)}</strong>
+  `;
+  return item;
+}
+
+function createKnowledgeListItem(title, meta, body) {
+  const item = document.createElement("article");
+  item.className = "knowledge-list-item";
+  item.innerHTML = `
+    <div>
+      <strong>${escapeHtml(title)}</strong>
+      <span>${escapeHtml(meta)}</span>
+    </div>
+    <p>${escapeHtml(body)}</p>
+  `;
+  return item;
+}
+
+function createDecisionCaseCard(item) {
+  const card = document.createElement("article");
+  card.className = "decision-case-card";
+  const signals = (item.signals || []).slice(0, 4);
+  const constraints = (item.constraints || []).slice(0, 4);
+  const actions = (item.actions || []).slice(0, 4);
+
+  card.innerHTML = `
+    <div class="decision-case-head">
+      <div>
+        <span>${escapeHtml(item.useCase || "Decision case")}</span>
+        <strong>${escapeHtml(item.title || item.decision || "Untitled decision")}</strong>
+      </div>
+      <span>${escapeHtml(item.confidence || "draft")}</span>
+    </div>
+    <p>${escapeHtml(item.pattern || item.context || item.decision || "")}</p>
+    <div class="decision-chip-row">
+      ${signals.map((value) => `<span>${escapeHtml(value)}</span>`).join("")}
+      ${constraints.map((value) => `<span>${escapeHtml(value)}</span>`).join("")}
+      ${actions.map((value) => `<span>${escapeHtml(value)}</span>`).join("")}
+    </div>
+  `;
+  return card;
+}
+
+function createKnowledgeEmpty(message) {
+  const empty = document.createElement("p");
+  empty.className = "recordings-empty";
+  empty.textContent = message;
+  return empty;
 }
 
 function getSavedUser() {

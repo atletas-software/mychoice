@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>My Choice</title>
-    <link rel="stylesheet" href="./styles.css?v=20260624-transcripts-2" />
+    <link rel="stylesheet" href="./styles.css?v=20260625-knowledge-1" />
     <script src="https://accounts.google.com/gsi/client" async defer></script>
     <script src="https://unpkg.com/@daily-co/daily-js" crossorigin></script>
   </head>
@@ -59,6 +59,7 @@
                 <button type="button" data-section-tab="business">My Business</button>
                 <button type="button" data-section-tab="training">AI Training</button>
                 <button type="button" data-section-tab="prep">Interview Prep</button>
+                <button type="button" data-section-tab="knowledge">Decisions Knowledge</button>
               </nav>
               <p id="welcomeTitle" class="welcome-line">Welcome</p>
             </div>
@@ -257,6 +258,49 @@
               </div>
             </div>
           </section>
+
+          <section class="workspace-section" id="knowledgeSection" data-section-panel="knowledge" hidden>
+            <div class="section-card knowledge-card">
+              <div class="section-card-head knowledge-head">
+                <div>
+                  <span>Decisions Knowledge</span>
+                  <h2>Domain decision model</h2>
+                </div>
+                <label class="knowledge-domain-picker">
+                  <span>Domain</span>
+                  <select id="knowledgeDomainInput">
+                    <option value="Property Management">Property Management</option>
+                    <option value="Financial Management">Financial Management</option>
+                  </select>
+                </label>
+              </div>
+              <p class="knowledge-status" id="knowledgeStatus">Select a domain to view its UDM, graph, and decision cases.</p>
+              <div class="knowledge-summary-grid" id="knowledgeSummaryGrid"></div>
+              <div class="knowledge-grid">
+                <section class="knowledge-panel">
+                  <div class="knowledge-panel-head">
+                    <span>UDM</span>
+                    <h3>Concept layer</h3>
+                  </div>
+                  <div class="knowledge-list" id="knowledgeConcepts"></div>
+                </section>
+                <section class="knowledge-panel">
+                  <div class="knowledge-panel-head">
+                    <span>Graph</span>
+                    <h3>Semantic relationships</h3>
+                  </div>
+                  <div class="knowledge-list" id="knowledgeRelationships"></div>
+                </section>
+              </div>
+              <section class="knowledge-panel">
+                <div class="knowledge-panel-head">
+                  <span>Evidence-backed cases</span>
+                  <h3>Decision Knowledge Model</h3>
+                </div>
+                <div class="knowledge-cases" id="knowledgeCases"></div>
+              </section>
+            </div>
+          </section>
         </div>
 
         <section class="conversation-panel" id="conversationPanel" hidden>
@@ -365,7 +409,7 @@
       </section>
     </main>
 
-    <script src="./config.js?v=20260624-transcripts-2"></script>
-    <script src="./app.js?v=20260624-transcripts-2"></script>
+    <script src="./config.js?v=20260625-knowledge-1"></script>
+    <script src="./app.js?v=20260625-knowledge-1"></script>
   </body>
 </html>
