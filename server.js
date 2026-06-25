@@ -68,7 +68,7 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
-    const contextDocumentMatch = url.pathname.match(/^\/context-documents\/(domain|user)\/([^/]+)\.txt$/);
+    const contextDocumentMatch = url.pathname.match(/^\/context-documents\/(domain|user|interview)\/([^/.]+)\.(txt|json)$/);
     if (req.method === "GET" && contextDocumentMatch) {
       await serveContextDocument(req, res, url, contextDocumentMatch[1], contextDocumentMatch[2]);
       return;
@@ -215,16 +215,19 @@ async function createTavusConversation(req, res) {
   const conversationContext = await buildConversationContext(sessionUser);
   const syncedDocumentIds = await getConversationTavusDocumentIds(sessionUser);
   const documentIds = [...new Set([...tavusDocumentIds, ...syncedDocumentIds])];
+  const dynamicDocumentTags = [...new Set([...tavusDocumentTags, `domain:${slugify(sessionUser.domain)}`])];
+  const customGreeting = buildInterviewOpeningQuestion(sessionUser);
   const tavusRequestBody = {
     ...(personaId ? { persona_id: personaId } : {}),
     ...(replicaId ? { replica_id: replicaId } : {}),
     ...(callbackUrl ? { callback_url: callbackUrl } : {}),
     ...(documentIds.length ? { document_ids: documentIds } : {}),
-    ...(tavusDocumentTags.length ? { document_tags: tavusDocumentTags } : {}),
-    ...((documentIds.length || tavusDocumentTags.length) && tavusDocumentRetrievalStrategy
+    ...(dynamicDocumentTags.length ? { document_tags: dynamicDocumentTags } : {}),
+    ...((documentIds.length || dynamicDocumentTags.length) && tavusDocumentRetrievalStrategy
       ? { document_retrieval_strategy: tavusDocumentRetrievalStrategy }
       : {}),
     conversation_name: cleanValue(body.conversation_name) || "Interview Me",
+    custom_greeting: customGreeting,
     conversational_context: conversationContext
   };
 
@@ -254,7 +257,9 @@ async function createTavusConversation(req, res) {
     metadata: {
       tavus_response: data,
       callback_url: callbackUrl,
-      utterance_url: utteranceUrl
+      utterance_url: utteranceUrl,
+      tavus_document_ids: documentIds,
+      tavus_document_tags: dynamicDocumentTags
     }
   });
 
@@ -708,7 +713,12 @@ async function updateProfile(req, res) {
 }
 
 async function endTavusConversation(conversationId, res) {
+  const session = await getInterviewSessionByConversationId(conversationId);
+
   if (!tavusApiKey) {
+    if (session) {
+      await finalizeInterviewKnowledge(session.id);
+    }
     sendJson(res, 204, {});
     return;
   }
@@ -724,12 +734,18 @@ async function endTavusConversation(conversationId, res) {
   );
 
   if (tavusResponse.status === 204) {
+    if (session) {
+      await finalizeInterviewKnowledge(session.id);
+    }
     res.writeHead(204);
     res.end();
     return;
   }
 
   const data = await tavusResponse.json().catch(() => ({}));
+  if (tavusResponse.ok && session) {
+    await finalizeInterviewKnowledge(session.id);
+  }
   sendJson(res, tavusResponse.ok ? 200 : tavusResponse.status, data);
 }
 
@@ -836,7 +852,9 @@ async function serveContextDocument(req, res, url, scope, rawScopeId) {
 
   const text = scope === "domain"
     ? await buildDomainContextDocument(scopeId)
-    : await buildUserContextDocument(Number(scopeId));
+    : scope === "interview"
+      ? await buildInterviewContextDocument(Number(scopeId))
+      : await buildUserContextDocument(Number(scopeId));
 
   if (!text) {
     sendJson(res, 404, { error: "Context document not found." });
@@ -844,7 +862,7 @@ async function serveContextDocument(req, res, url, scope, rawScopeId) {
   }
 
   res.writeHead(200, {
-    "Content-Type": "text/plain; charset=utf-8",
+    "Content-Type": scope === "interview" ? "application/json; charset=utf-8" : "text/plain; charset=utf-8",
     "Cache-Control": "no-store, max-age=0"
   });
   res.end(text);
@@ -899,10 +917,18 @@ async function buildConversationContext(user) {
   }
 
   parts.push(
+    `Opening behavior: start the interview immediately. Do not wait for the user to speak first. Begin with this question: "${buildInterviewOpeningQuestion(user)}"`,
     "Interview objective: ask targeted questions that fill missing decision knowledge. Capture the user's real expertise, signals they use, constraints, options, tradeoffs, actions, outcomes, and examples. Ask concise follow-up questions when an answer is vague."
   );
 
   return parts.join(" ");
+}
+
+function buildInterviewOpeningQuestion(user) {
+  const firstName = cleanValue(user?.firstName) || cleanValue(user?.name).split(/\s+/)[0] || "there";
+  const domain = normalizeDomain(user?.domain);
+
+  return `Hi ${firstName}, I am Alma. I will lead this My Choice interview. To start, tell me about a recent ${domain} decision you had to make, what made it important, and what information you used to decide.`;
 }
 
 async function getSharedDomainContext(domain) {
@@ -965,7 +991,9 @@ async function getConversationTavusDocumentIds(user) {
 async function syncTavusContextDocument(scope, scopeId, domain) {
   const text = scope === "domain"
     ? await buildDomainContextDocument(scopeId)
-    : await buildUserContextDocument(Number(scopeId));
+    : scope === "interview"
+      ? await buildInterviewContextDocument(Number(scopeId))
+      : await buildUserContextDocument(Number(scopeId));
 
   if (!text) {
     return;
@@ -982,7 +1010,9 @@ async function syncTavusContextDocument(scope, scopeId, domain) {
   const documentUrl = buildPublicContextDocumentUrl(scope, scopeId);
   const documentName = scope === "domain"
     ? `My Choice Domain Context - ${scopeId}`
-    : `My Choice Personal Context - User ${scopeId}`;
+    : scope === "interview"
+      ? `My Choice Interview Context - Session ${scopeId}`
+      : `My Choice Personal Context - User ${scopeId}`;
   const tags = [
     "my-choice",
     scope,
@@ -1135,10 +1165,101 @@ async function buildUserContextDocument(userId) {
   ].join("\n");
 }
 
+async function buildInterviewContextDocument(sessionId) {
+  const session = await db.get(`
+    SELECT i.id, i.user_id, i.domain, i.status, i.tavus_conversation_id,
+           i.started_at, i.ended_at, i.created_at, i.updated_at,
+           users.email, users.name, users.first_name, users.last_name, users.linkedin,
+           users.resume_file_name, users.resume_text,
+           personal_contexts.context_text AS personal_context,
+           personal_contexts.future_direction
+    FROM interview_sessions i
+    JOIN users ON users.id = i.user_id
+    LEFT JOIN personal_contexts ON personal_contexts.user_id = users.id
+    WHERE i.id = ?
+  `, [sessionId]);
+
+  if (!session) {
+    return "";
+  }
+
+  const transcript = await db.all(`
+    SELECT id, speaker, speaker_role, turn_index, text, created_at
+    FROM conversation_transcripts
+    WHERE session_id = ?
+      AND LOWER(COALESCE(speaker, '')) <> 'system'
+      AND LOWER(COALESCE(speaker_role, '')) <> 'system'
+    ORDER BY COALESCE(turn_index, id), id
+  `, [sessionId]);
+  const decisionCases = await db.all(`
+    SELECT id, domain, use_case, title, decision_statement, context_summary,
+           signals_json, constraints_json, options_json, tradeoffs_json,
+           actions_json, outcomes_json, pattern_summary, confidence
+    FROM decision_cases
+    WHERE session_id = ?
+    ORDER BY id ASC
+  `, [sessionId]);
+  const normalizedDomain = normalizeDomain(session.domain);
+  const document = {
+    documentType: "my_choice_interview_context",
+    schemaVersion: "interview_context_v1",
+    domain: normalizedDomain,
+    user: {
+      id: session.user_id,
+      name: session.name,
+      email: session.email,
+      firstName: session.first_name,
+      lastName: session.last_name,
+      linkedIn: session.linkedin,
+      resumeFileName: session.resume_file_name,
+      personalContext: session.personal_context,
+      futureDirection: session.future_direction
+    },
+    interview: {
+      sessionId: session.id,
+      status: session.status,
+      tavusConversationId: session.tavus_conversation_id,
+      startedAt: session.started_at,
+      endedAt: session.ended_at,
+      createdAt: session.created_at,
+      updatedAt: session.updated_at
+    },
+    interviewContext: {
+      transcriptTurnCount: transcript.length,
+      decisionCaseCount: decisionCases.length,
+      keyValueSummary: decisionCases.reduce((summary, item) => {
+        summary[item.use_case] = {
+          title: item.title,
+          decision: item.decision_statement,
+          context: item.context_summary,
+          signals: parseJson(item.signals_json, []),
+          constraints: parseJson(item.constraints_json, []),
+          options: parseJson(item.options_json, []),
+          tradeoffs: parseJson(item.tradeoffs_json, []),
+          actions: parseJson(item.actions_json, []),
+          outcomes: parseJson(item.outcomes_json, []),
+          pattern: item.pattern_summary,
+          confidence: item.confidence
+        };
+        return summary;
+      }, {})
+    },
+    transcript: transcript.filter((turn) => isKnowledgeEvidenceText(turn.text)).map((turn) => ({
+      id: turn.id,
+      speaker: turn.speaker || turn.speaker_role || "speaker",
+      text: turn.text,
+      createdAt: turn.created_at
+    }))
+  };
+
+  return JSON.stringify(document, null, 2);
+}
+
 function buildPublicContextDocumentUrl(scope, scopeId) {
   const base = publicCallbackBaseUrl.replace(/\/$/, "");
   const token = getTavusDocumentToken(scope, scopeId);
-  return `${base}/context-documents/${scope}/${encodeURIComponent(scopeId)}.txt?token=${encodeURIComponent(token)}`;
+  const extension = scope === "interview" ? "json" : "txt";
+  return `${base}/context-documents/${scope}/${encodeURIComponent(scopeId)}.${extension}?token=${encodeURIComponent(token)}`;
 }
 
 function getTavusDocumentToken(scope, scopeId) {
@@ -1597,6 +1718,33 @@ async function extractDecisionKnowledgeForSession(sessionId) {
 
   if (user) {
     await syncContextForTavus(user);
+    await syncTavusContextDocument("interview", String(session.id), domain);
+  }
+}
+
+async function finalizeInterviewKnowledge(sessionId) {
+  await extractDecisionKnowledgeForSession(sessionId);
+
+  const session = await db.get(`
+    SELECT id, user_id, domain
+    FROM interview_sessions
+    WHERE id = ?
+  `, [sessionId]);
+
+  if (!session) {
+    return;
+  }
+
+  await markInterviewSession(session.id, {
+    status: "ended",
+    endedAt: new Date().toISOString()
+  });
+
+  const user = await getUserById(session.user_id);
+
+  if (user) {
+    await syncContextForTavus(user);
+    await syncTavusContextDocument("interview", String(session.id), normalizeDomain(session.domain));
   }
 }
 

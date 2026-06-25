@@ -52,6 +52,8 @@ const knowledgeCases = document.querySelector("#knowledgeCases");
 let activeConversationId = "";
 let dailyCall = null;
 let currentUser = null;
+let selectedInterviewId = "";
+let recordingsRefreshTimer = null;
 
 initializeApp();
 
@@ -403,12 +405,14 @@ async function endActiveInterview() {
       method: "POST"
     });
     loadInterviewHistory();
+    startRecordingsRefreshLoop();
   } catch {
     setInterviewStatus("Interview closed locally. Tavus cleanup may need a retry.", true);
+    startRecordingsRefreshLoop();
   }
 }
 
-async function loadInterviewHistory() {
+async function loadInterviewHistory(options = {}) {
   if (!recordingsList) {
     return;
   }
@@ -418,11 +422,13 @@ async function loadInterviewHistory() {
     return;
   }
 
-  recordingsList.replaceChildren();
-  const loading = document.createElement("p");
-  loading.className = "recordings-empty";
-  loading.textContent = "Loading previous interviews...";
-  recordingsList.append(loading);
+  if (!options.silent) {
+    recordingsList.replaceChildren();
+    const loading = document.createElement("p");
+    loading.className = "recordings-empty";
+    loading.textContent = "Loading previous interviews...";
+    recordingsList.append(loading);
+  }
 
   const controller = new AbortController();
   const timeout = window.setTimeout(() => controller.abort(), 8000);
@@ -438,6 +444,10 @@ async function loadInterviewHistory() {
     }
 
     renderInterviewHistory(data.interviews || [], data);
+
+    if (options.preserveDetail && selectedInterviewId) {
+      await loadInterviewDetail(selectedInterviewId, { silent: true });
+    }
   } catch (error) {
     recordingsList.replaceChildren();
     const message = document.createElement("p");
@@ -509,19 +519,25 @@ function renderInterviewHistory(interviews, meta = {}) {
   );
 }
 
-async function loadInterviewDetail(interviewId) {
+async function loadInterviewDetail(interviewId, options = {}) {
   if (!recordingsList || !interviewId) {
     return;
   }
 
+  selectedInterviewId = interviewId;
   const existingPanel = recordingsList.querySelector("[data-interview-detail]");
-  existingPanel?.remove();
+  if (!options.silent) {
+    existingPanel?.remove();
+  }
 
-  const loading = document.createElement("section");
+  const loading = existingPanel || document.createElement("section");
   loading.className = "recording-detail";
   loading.dataset.interviewDetail = "true";
-  loading.innerHTML = `<p class="recordings-hint">Loading transcript...</p>`;
-  recordingsList.append(loading);
+
+  if (!options.silent || !existingPanel) {
+    loading.innerHTML = `<p class="recordings-hint">Loading transcript...</p>`;
+    recordingsList.append(loading);
+  }
 
   try {
     const response = await fetch(`/api/interviews/${encodeURIComponent(interviewId)}`);
@@ -537,6 +553,21 @@ async function loadInterviewDetail(interviewId) {
       <p class="recordings-empty error">${escapeHtml(error instanceof Error ? error.message : "Unable to load interview transcript.")}</p>
     `;
   }
+}
+
+function startRecordingsRefreshLoop() {
+  window.clearInterval(recordingsRefreshTimer);
+  let attempts = 0;
+
+  recordingsRefreshTimer = window.setInterval(async () => {
+    attempts += 1;
+    await loadInterviewHistory({ silent: true, preserveDetail: true });
+
+    if (attempts >= 12) {
+      window.clearInterval(recordingsRefreshTimer);
+      recordingsRefreshTimer = null;
+    }
+  }, 5000);
 }
 
 function renderInterviewDetail(data) {
