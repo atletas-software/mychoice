@@ -44,7 +44,7 @@ button {
   display: grid;
   min-height: 100vh;
   place-items: center;
-  padding: 28px 18px;
+  padding: 14px 12px;
 }
 
 .auth-panel,
@@ -167,7 +167,7 @@ code {
 
 .preview-button,
 .ghost-button {
-  min-height: 42px;
+  min-height: 36px;
   border: 1px solid var(--line);
   border-radius: 999px;
   color: var(--ink);
@@ -202,10 +202,10 @@ code {
 .home-panel {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
-  grid-template-rows: 88px minmax(0, 1fr);
+  grid-template-rows: 64px minmax(0, 1fr);
   gap: 0;
-  width: min(100%, 1480px);
-  min-height: calc(100vh - 34px);
+  width: min(100%, 1420px);
+  min-height: calc(100vh - 18px);
   padding: 0;
   color: #e8f0fb;
   background: #0b1a26;
@@ -217,20 +217,20 @@ code {
   display: flex;
   grid-column: 1;
   align-items: center;
-  gap: 26px;
-  padding: 0 34px;
+  gap: 18px;
+  padding: 0 26px;
   background: #14283a;
   border-bottom: 1px solid #263b4f;
 }
 
 .app-topbar strong {
   color: #f2f7ff;
-  font-size: clamp(1.25rem, 2vw, 2rem);
+  font-size: clamp(1.1rem, 1.6vw, 1.55rem);
 }
 
 .app-topbar .ghost-button {
   margin-left: auto;
-  min-width: 112px;
+  min-width: 94px;
   color: #e8f0fb;
   background: rgba(255, 255, 255, 0.04);
   border-color: #32475d;
@@ -238,8 +238,8 @@ code {
 
 .menu-button {
   display: grid;
-  gap: 6px;
-  width: 42px;
+  gap: 5px;
+  width: 34px;
   padding: 0;
   border: 0;
   background: transparent;
@@ -255,26 +255,26 @@ code {
 
 .app-mark {
   display: grid;
-  grid-template-columns: repeat(2, 15px);
-  gap: 6px;
+  grid-template-columns: repeat(2, 11px);
+  gap: 5px;
   align-items: start;
 }
 
 .app-mark span {
   display: block;
-  width: 15px;
-  height: 36px;
+  width: 11px;
+  height: 28px;
   background: #ff7133;
   border-radius: 999px;
 }
 
 .app-mark span:nth-child(2) {
-  transform: translateY(24px);
+  transform: translateY(18px);
 }
 
 .app-mark span:nth-child(3) {
   grid-column: 1;
-  transform: translateX(10px);
+  transform: translateX(8px);
 }
 
 .primary-action svg,
@@ -291,8 +291,8 @@ code {
 .app-workspace {
   display: grid;
   grid-row: 2;
-  gap: 26px;
-  padding: 48px 56px 56px;
+  gap: 18px;
+  padding: 28px 54px 38px;
   overflow: hidden auto;
   background: #0b1a26;
 }
@@ -301,24 +301,24 @@ code {
   display: flex;
   align-items: end;
   justify-content: space-between;
-  gap: 28px;
-  padding-bottom: 36px;
+  gap: 20px;
+  padding-bottom: 24px;
   border-bottom: 1px solid #2b4054;
 }
 
 .workspace-heading .eyebrow {
   color: #aebdce;
-  font-size: 0.92rem;
+  font-size: 0.78rem;
 }
 
 .workspace-heading h1 {
   color: #e8f0fb;
-  font-size: clamp(2.4rem, 4.5vw, 4rem);
+  font-size: clamp(2rem, 3.4vw, 3.2rem);
   line-height: 1.04;
 }
 
 .welcome-line {
-  margin: 12px 0 0;
+  margin: 10px 0 0;
   color: #88a0b7;
   font-size: 1rem;
 }
@@ -326,13 +326,13 @@ code {
 .section-tabs {
   display: flex;
   flex-wrap: wrap;
-  gap: 10px;
-  margin-top: 24px;
+  gap: 8px;
+  margin-top: 18px;
 }
 
 .section-tabs button {
-  min-height: 46px;
-  padding: 0 22px;
+  min-height: 38px;
+  padding: 0 16px;
   color: #aebdce;
   background: rgba(255, 255, 255, 0.02);
   border: 1px solid #2b4054;
@@ -366,14 +366,14 @@ code {
 }
 
 .primary-action {
-  gap: 18px;
-  min-width: min(100%, 390px);
-  min-height: 82px;
-  padding: 0 42px;
+  gap: 14px;
+  min-width: min(100%, 340px);
+  min-height: 64px;
+  padding: 0 32px;
   color: #ffffff;
   background: #559eae;
   border: 1px solid #69b7c7;
-  font-size: 1.35rem;
+  font-size: 1.12rem;
 }
 
 .primary-action:hover {
@@ -402,14 +402,14 @@ code {
 
 .decision-grid {
   display: grid;
-  grid-template-columns: minmax(360px, 0.9fr) minmax(480px, 1.2fr);
-  gap: 24px;
+  grid-template-columns: minmax(300px, 0.85fr) minmax(420px, 1.15fr);
+  gap: 22px;
 }
 
 .avatar-card,
 .prompt-card {
   overflow: hidden;
-  min-height: 520px;
+  min-height: 420px;
   background: #14283a;
   border: 1px solid #294158;
   border-radius: 8px;
@@ -420,13 +420,13 @@ code {
   position: relative;
   display: grid;
   place-items: center;
-  padding: 42px;
+  padding: 28px;
 }
 
 .portrait-ring {
   position: relative;
   z-index: 2;
-  width: min(92%, 470px);
+  width: min(88%, 360px);
   aspect-ratio: 1;
   overflow: hidden;
   border: 1px solid #2d4359;
@@ -443,9 +443,9 @@ code {
 .voice-wave {
   position: absolute;
   right: 0;
-  bottom: 96px;
+  bottom: 62px;
   left: 0;
-  height: 42px;
+  height: 32px;
   background:
     radial-gradient(80% 70% at 40% 0%, transparent 62%, rgba(255, 113, 51, 0.56) 63% 66%, transparent 67%),
     radial-gradient(78% 65% at 50% 0%, transparent 62%, rgba(85, 158, 174, 0.7) 63% 66%, transparent 67%),
@@ -462,8 +462,8 @@ code {
   min-height: 100%;
   align-content: start;
   justify-items: center;
-  padding-top: clamp(64px, 12vh, 132px);
-  padding-inline: clamp(22px, 4vw, 48px);
+  padding-top: clamp(38px, 8vh, 86px);
+  padding-inline: clamp(20px, 3vw, 40px);
 }
 
 .start-requirement {
@@ -480,10 +480,10 @@ code {
 
 .recordings-panel {
   display: grid;
-  gap: 18px;
-  width: min(100%, 620px);
-  margin-top: 42px;
-  padding: 24px;
+  gap: 14px;
+  width: min(100%, 560px);
+  margin-top: 28px;
+  padding: 18px;
   background: rgba(11, 26, 38, 0.62);
   border: 1px solid #294158;
   border-radius: 8px;
@@ -504,7 +504,7 @@ code {
 .recordings-head h2 {
   margin: 0;
   color: #e8f0fb;
-  font-size: 1.35rem;
+  font-size: 1.15rem;
   line-height: 1.15;
 }
 
@@ -548,8 +548,8 @@ code {
   gap: 14px;
   align-items: center;
   width: 100%;
-  min-height: 74px;
-  padding: 14px 16px;
+  min-height: 62px;
+  padding: 12px 14px;
   color: inherit;
   text-align: left;
   background: #14283a;
@@ -844,7 +844,7 @@ code {
 
 .workspace-section {
   display: grid;
-  margin-top: 32px;
+  margin-top: 22px;
 }
 
 .section-card {
