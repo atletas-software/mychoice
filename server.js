@@ -864,7 +864,7 @@ async function serveContextDocument(req, res, url, scope, rawScopeId) {
   }
 
   res.writeHead(200, {
-    "Content-Type": ["interview", "user"].includes(scope) ? "application/json; charset=utf-8" : "text/plain; charset=utf-8",
+    "Content-Type": "text/plain; charset=utf-8",
     "Cache-Control": "no-store, max-age=0"
   });
   res.end(text);
@@ -1346,8 +1346,7 @@ async function buildPersonalContextJson(user) {
 function buildPublicContextDocumentUrl(scope, scopeId) {
   const base = publicCallbackBaseUrl.replace(/\/$/, "");
   const token = getTavusDocumentToken(scope, scopeId);
-  const extension = ["interview", "user"].includes(scope) ? "json" : "txt";
-  return `${base}/context-documents/${scope}/${encodeURIComponent(scopeId)}.${extension}?token=${encodeURIComponent(token)}`;
+  return `${base}/context-documents/${scope}/${encodeURIComponent(scopeId)}.txt?token=${encodeURIComponent(token)}`;
 }
 
 function getTavusDocumentToken(scope, scopeId) {
