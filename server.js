@@ -68,6 +68,11 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
+    if (req.method === "GET" && url.pathname === "/api/tavus/document-syncs") {
+      await getTavusDocumentSyncLogs(req, res);
+      return;
+    }
+
     const contextDocumentMatch = url.pathname.match(/^\/context-documents\/(domain|user|interview)\/([^/.]+)\.(txt|json)$/);
     if (req.method === "GET" && contextDocumentMatch) {
       await serveContextDocument(req, res, url, contextDocumentMatch[1], contextDocumentMatch[2]);
@@ -102,6 +107,11 @@ const server = http.createServer(async (req, res) => {
 
     if (req.method === "POST" && url.pathname === "/api/tavus/conversations") {
       await createTavusConversation(req, res);
+      return;
+    }
+
+    if (req.method === "POST" && url.pathname === "/api/tavus/sync-profile") {
+      await syncTavusProfileContext(req, res);
       return;
     }
 
@@ -359,6 +369,64 @@ async function getDecisionKnowledge(req, res, url) {
       createdAt: item.created_at,
       updatedAt: item.updated_at
     }))
+  });
+}
+
+async function getTavusDocumentSyncLogs(req, res) {
+  const sessionUser = await getSessionUser(req);
+
+  if (!sessionUser) {
+    sendJson(res, 401, { error: "Sign in to view Tavus sync logs." });
+    return;
+  }
+
+  const interviews = await db.all(`
+    SELECT id
+    FROM interview_sessions
+    WHERE user_id = ?
+  `, [sessionUser.id]);
+  const allowedInterviewIds = new Set(interviews.map((item) => String(item.id)));
+  const rows = await db.all(`
+    SELECT id, scope, scope_id, domain, document_name, document_url, document_id,
+           tags_json, status, metadata_json, synced_at, created_at, updated_at
+    FROM tavus_document_syncs
+    WHERE (scope = 'user' AND scope_id = ?)
+       OR scope = 'domain'
+       OR scope = 'interview'
+    ORDER BY id DESC
+    LIMIT 30
+  `, [String(sessionUser.id)]);
+
+  const filteredRows = rows.filter((row) => {
+    if (row.scope !== "interview") {
+      return true;
+    }
+
+    return allowedInterviewIds.has(String(row.scope_id));
+  });
+
+  sendJson(res, 200, {
+    count: filteredRows.length,
+    logs: filteredRows.map((row) => {
+      const metadata = parseJson(row.metadata_json, {});
+      return {
+        id: row.id,
+        scope: row.scope,
+        scopeId: row.scope_id,
+        domain: row.domain,
+        documentName: row.document_name,
+        documentUrl: row.document_url,
+        documentId: row.document_id,
+        tags: parseJson(row.tags_json, []),
+        status: row.status,
+        httpStatus: metadata.http_status || 0,
+        uploadPayload: metadata.upload_payload || {},
+        tavusResponse: metadata.tavus_response || {},
+        syncedAt: row.synced_at,
+        createdAt: row.created_at,
+        updatedAt: row.updated_at
+      };
+    })
   });
 }
 
@@ -714,6 +782,48 @@ async function updateProfile(req, res) {
   sendJson(res, 200, { user });
 }
 
+async function syncTavusProfileContext(req, res) {
+  const sessionUser = await getSessionUser(req);
+
+  if (!sessionUser) {
+    sendJson(res, 401, { error: "Sign in to sync Tavus profile context." });
+    return;
+  }
+
+  await syncContextForTavus(sessionUser, { force: true });
+  const logs = await db.all(`
+    SELECT id, scope, scope_id, domain, document_name, document_id, status,
+           tags_json, metadata_json, synced_at, updated_at
+    FROM tavus_document_syncs
+    WHERE (scope = 'user' AND scope_id = ?)
+       OR (scope = 'domain' AND domain = ?)
+    ORDER BY id DESC
+    LIMIT 10
+  `, [String(sessionUser.id), normalizeDomain(sessionUser.domain)]);
+
+  sendJson(res, 200, {
+    ok: true,
+    logs: logs.map((row) => {
+      const metadata = parseJson(row.metadata_json, {});
+      return {
+        id: row.id,
+        scope: row.scope,
+        scopeId: row.scope_id,
+        domain: row.domain,
+        documentName: row.document_name,
+        documentId: row.document_id,
+        status: row.status,
+        tags: parseJson(row.tags_json, []),
+        httpStatus: metadata.http_status || 0,
+        uploadPayload: metadata.upload_payload || {},
+        tavusResponse: metadata.tavus_response || {},
+        syncedAt: row.synced_at,
+        updatedAt: row.updated_at
+      };
+    })
+  });
+}
+
 async function endTavusConversation(conversationId, res) {
   const session = await getInterviewSessionByConversationId(conversationId);
 
@@ -992,7 +1102,7 @@ async function getDomainKnowledgeSummaryForConversation(domain) {
   }).join(" ");
 }
 
-async function syncContextForTavus(user) {
+async function syncContextForTavus(user, options = {}) {
   if (!tavusApiKey || !publicCallbackBaseUrl || !user?.id) {
     return;
   }
@@ -1000,8 +1110,8 @@ async function syncContextForTavus(user) {
   const domain = normalizeDomain(user.domain);
 
   try {
-    await syncTavusContextDocument("domain", domain, domain);
-    await syncTavusContextDocument("user", String(user.id), domain);
+    await syncTavusContextDocument("domain", domain, domain, options);
+    await syncTavusContextDocument("user", String(user.id), domain, options);
   } catch (error) {
     console.warn("Tavus context sync failed", error instanceof Error ? error.message : error);
   }
@@ -1019,7 +1129,7 @@ async function getConversationTavusDocumentIds(user) {
   ]);
 }
 
-async function syncTavusContextDocument(scope, scopeId, domain) {
+async function syncTavusContextDocument(scope, scopeId, domain, options = {}) {
   const text = scope === "domain"
     ? await buildDomainContextDocument(scopeId)
     : scope === "interview"
@@ -1033,7 +1143,7 @@ async function syncTavusContextDocument(scope, scopeId, domain) {
   const contentHash = crypto.createHash("sha256").update(text).digest("hex");
   const previous = await db.getLatestTavusDocumentSync(scope, scopeId);
 
-  if (previous?.content_hash === contentHash && previous?.document_id) {
+  if (!options.force && previous?.content_hash === contentHash && previous?.document_id) {
     return;
   }
 
@@ -1055,6 +1165,12 @@ async function syncTavusContextDocument(scope, scopeId, domain) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 10000);
 
+  const uploadPayload = {
+    document_url: documentUrl,
+    document_name: documentName,
+    tags
+  };
+
   try {
     tavusResponse = await fetch("https://tavusapi.com/v2/documents", {
       method: "POST",
@@ -1063,11 +1179,7 @@ async function syncTavusContextDocument(scope, scopeId, domain) {
         "x-api-key": tavusApiKey
       },
       signal: controller.signal,
-      body: JSON.stringify({
-        document_url: documentUrl,
-        document_name: documentName,
-        tags
-      })
+      body: JSON.stringify(uploadPayload)
     });
     data = await tavusResponse.json().catch(() => ({}));
   } catch (error) {
@@ -1089,7 +1201,11 @@ async function syncTavusContextDocument(scope, scopeId, domain) {
     tags,
     status: ok ? "uploaded" : "failed",
     contentHash,
-    metadata: { tavus_response: data, http_status: tavusResponse?.status || 0 },
+    metadata: {
+      tavus_response: data,
+      http_status: tavusResponse?.status || 0,
+      upload_payload: uploadPayload
+    },
     syncedAt: now,
     now
   });
@@ -2647,9 +2763,11 @@ async function upsertPersonalContext(userId, context) {
     linkedIn: context.linkedIn,
     domain: context.domain,
     futureDirection: context.futureDirection,
-    resumeFileName: context.resume?.fileName || undefined,
-    resumeMimeType: context.resume?.mimeType || undefined,
-    resumeSizeBytes: context.resume?.sizeBytes || undefined,
+    resumeFileName: contextUser.resumeFileName || undefined,
+    resumeMimeType: contextUser.resumeMimeType || undefined,
+    resumeSizeBytes: contextUser.resumeSizeBytes || undefined,
+    resumeUploadedAt: contextUser.resumeUploadedAt || undefined,
+    resumeTextAvailable: Boolean(contextUser.resumeText),
     source: "profile"
   });
 
