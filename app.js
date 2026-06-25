@@ -225,7 +225,10 @@ function showAuth() {
 function showHome(user) {
   authPanel.hidden = true;
   homePanel.hidden = false;
-  welcomeTitle.textContent = user.name ? `Welcome, ${user.name}` : "Welcome";
+
+  if (welcomeTitle) {
+    welcomeTitle.textContent = user.name ? `Welcome, ${user.name}` : "Welcome";
+  }
 
   if (user) {
     loadInterviewHistory();

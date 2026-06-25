@@ -302,7 +302,7 @@ code {
   align-items: end;
   justify-content: space-between;
   gap: 20px;
-  padding-bottom: 24px;
+  padding-bottom: 18px;
   border-bottom: 1px solid #2b4054;
 }
 
@@ -327,7 +327,7 @@ code {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
-  margin-top: 18px;
+  margin-top: 0;
 }
 
 .section-tabs button {
