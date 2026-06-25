@@ -222,12 +222,13 @@ async function createTavusConversation(req, res) {
     ? `${publicCallbackBaseUrl.replace(/\/$/, "")}/api/tavus/utterance`
     : "";
 
-  await syncContextForTavus(sessionUser);
-  const conversationContext = await buildConversationContext(sessionUser);
+  const interviewPlan = await upsertInterviewPlanForUser(sessionUser);
+  await syncContextForTavus(sessionUser, { force: true });
+  const conversationContext = await buildConversationContext(sessionUser, interviewPlan);
   const syncedDocumentIds = await getConversationTavusDocumentIds(sessionUser);
   const documentIds = [...new Set([...tavusDocumentIds, ...syncedDocumentIds])];
   const dynamicDocumentTags = [...new Set([...tavusDocumentTags, `domain:${slugify(sessionUser.domain)}`])];
-  const customGreeting = buildInterviewOpeningQuestion(sessionUser);
+  const customGreeting = interviewPlan.openingQuestion || buildInterviewOpeningQuestion(sessionUser);
   const tavusRequestBody = {
     ...(personaId ? { persona_id: personaId } : {}),
     ...(replicaId ? { replica_id: replicaId } : {}),
@@ -270,7 +271,9 @@ async function createTavusConversation(req, res) {
       callback_url: callbackUrl,
       utterance_url: utteranceUrl,
       tavus_document_ids: documentIds,
-      tavus_document_tags: dynamicDocumentTags
+      tavus_document_tags: dynamicDocumentTags,
+      interview_plan_id: interviewPlan.id || null,
+      interview_plan: interviewPlan
     }
   });
 
@@ -422,6 +425,7 @@ async function getTavusDocumentSyncLogs(req, res) {
         status: row.status,
         httpStatus: metadata.http_status || 0,
         uploadPayload: metadata.upload_payload || {},
+        uploadAttempts: metadata.upload_attempts || [],
         tavusResponse: metadata.tavus_response || {},
         syncedAt: row.synced_at,
         createdAt: row.created_at,
@@ -731,7 +735,7 @@ async function updateProfile(req, res) {
   const now = new Date().toISOString();
   const firstName = cleanValue(body.firstName);
   const lastName = cleanValue(body.lastName);
-  const resume = normalizeResumePayload(body.resume);
+  const resume = await enrichResumePayload(normalizeResumePayload(body.resume));
 
   if (resume && resume.contentBase64.length > 5 * 1024 * 1024) {
     sendJson(res, 400, { error: "Resume file is too large. Upload a file under 4 MB." });
@@ -817,6 +821,7 @@ async function syncTavusProfileContext(req, res) {
         tags: parseJson(row.tags_json, []),
         httpStatus: metadata.http_status || 0,
         uploadPayload: metadata.upload_payload || {},
+        uploadAttempts: metadata.upload_attempts || [],
         tavusResponse: metadata.tavus_response || {},
         syncedAt: row.synced_at,
         updatedAt: row.updated_at
@@ -954,6 +959,58 @@ function normalizeResumePayload(value) {
   };
 }
 
+async function enrichResumePayload(resume) {
+  if (!resume) {
+    return null;
+  }
+
+  if (resume.extractedText) {
+    return resume;
+  }
+
+  const extractedText = await extractResumeText(resume);
+
+  return {
+    ...resume,
+    extractedText
+  };
+}
+
+async function extractResumeText(resume) {
+  const fileName = resume.fileName || "";
+  const mimeType = resume.mimeType || "";
+  const buffer = Buffer.from(resume.contentBase64 || "", "base64");
+
+  if (!buffer.length) {
+    return "";
+  }
+
+  try {
+    if (mimeType === "application/pdf" || /\.pdf$/i.test(fileName)) {
+      const pdfParse = require("pdf-parse");
+      const result = await pdfParse(buffer);
+      return cleanValue(result?.text).slice(0, 20000);
+    }
+
+    if (
+      mimeType === "application/vnd.openxmlformats-officedocument.wordprocessingml.document" ||
+      /\.docx$/i.test(fileName)
+    ) {
+      const mammoth = require("mammoth");
+      const result = await mammoth.extractRawText({ buffer });
+      return cleanValue(result?.value).slice(0, 20000);
+    }
+
+    if (mimeType.startsWith("text/") || /\.(txt|md)$/i.test(fileName)) {
+      return buffer.toString("utf8").slice(0, 20000);
+    }
+  } catch (error) {
+    console.warn("Resume text extraction failed", error instanceof Error ? error.message : error);
+  }
+
+  return "";
+}
+
 async function serveContextDocument(req, res, url, scope, rawScopeId) {
   const scopeId = decodeURIComponent(rawScopeId);
   const token = cleanValue(url.searchParams.get("token"));
@@ -981,10 +1038,11 @@ async function serveContextDocument(req, res, url, scope, rawScopeId) {
   res.end(text);
 }
 
-async function buildConversationContext(user) {
+async function buildConversationContext(user, interviewPlan = null) {
   const name = cleanValue(user?.name);
   const email = cleanValue(user?.email);
   const domain = normalizeDomain(user?.domain);
+  const plan = interviewPlan || (user?.id ? await getLatestInterviewPlan(user.id) : null);
   const sharedContext = await getSharedDomainContext(domain);
   const knowledgeSummary = await getDomainKnowledgeSummaryForConversation(domain);
   const personalJsonContext = user?.id ? await buildUserContextDocument(user.id) : "";
@@ -1014,6 +1072,10 @@ async function buildConversationContext(user) {
     parts.push(`Prior domain decision knowledge to use for better follow-up questions: ${knowledgeSummary}`);
   }
 
+  if (plan) {
+    parts.push(`Current Tavus interviewer brief: ${JSON.stringify(plan).slice(0, 4500)}`);
+  }
+
   if (user?.resumeFileName) {
     parts.push(`Resume file on record: ${user.resumeFileName}.`);
   }
@@ -1035,7 +1097,7 @@ async function buildConversationContext(user) {
   }
 
   parts.push(
-    `Opening behavior: start the interview immediately. Do not wait for the user to speak first. Begin with this question: "${buildInterviewOpeningQuestion(user)}"`,
+    `Opening behavior: start the interview immediately. Do not wait for the user to speak first. Begin with this question: "${plan?.openingQuestion || buildInterviewOpeningQuestion(user)}"`,
     "Interview objective: ask targeted questions that fill missing decision knowledge. Capture the user's real expertise, signals they use, constraints, options, tradeoffs, actions, outcomes, and examples. Ask concise follow-up questions when an answer is vague."
   );
 
@@ -1171,20 +1233,48 @@ async function syncTavusContextDocument(scope, scopeId, domain, options = {}) {
     document_name: documentName,
     tags
   };
+  const uploadAttempts = [];
 
   try {
-    tavusResponse = await fetch("https://tavusapi.com/v2/documents", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-api-key": tavusApiKey
-      },
-      signal: controller.signal,
-      body: JSON.stringify(uploadPayload)
-    });
-    data = await tavusResponse.json().catch(() => ({}));
+    const payloads = [
+      uploadPayload,
+      {
+        name: documentName,
+        url: documentUrl,
+        tags
+      }
+    ];
+
+    for (const payload of payloads) {
+      tavusResponse = await fetch("https://tavusapi.com/v2/documents", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-api-key": tavusApiKey
+        },
+        signal: controller.signal,
+        body: JSON.stringify(payload)
+      });
+      data = await tavusResponse.json().catch(() => ({}));
+      uploadAttempts.push({
+        status: tavusResponse.status,
+        ok: tavusResponse.ok,
+        payload,
+        response: data
+      });
+
+      if (tavusResponse.ok) {
+        break;
+      }
+    }
   } catch (error) {
     data = { error: error instanceof Error ? error.message : "Tavus document upload failed" };
+    uploadAttempts.push({
+      status: tavusResponse?.status || 0,
+      ok: false,
+      payload: uploadPayload,
+      response: data
+    });
   } finally {
     clearTimeout(timeout);
   }
@@ -1205,7 +1295,8 @@ async function syncTavusContextDocument(scope, scopeId, domain, options = {}) {
     metadata: {
       tavus_response: data,
       http_status: tavusResponse?.status || 0,
-      upload_payload: uploadPayload
+      upload_payload: uploadPayload,
+      upload_attempts: uploadAttempts
     },
     syncedAt: now,
     now
@@ -1280,8 +1371,17 @@ async function buildUserContextDocument(userId) {
     FROM personal_contexts
     WHERE user_id = ?
   `, [userId]);
+  const plan = await getLatestInterviewPlan(userId);
 
   if (row?.context_json) {
+    const context = parseJson(row.context_json, null);
+
+    if (context && typeof context === "object") {
+      context.interviewerPlan = plan || context.interviewerPlan || null;
+      context.updatedForTavusAt = new Date().toISOString();
+      return JSON.stringify(context, null, 2);
+    }
+
     return row.context_json;
   }
 
@@ -1291,7 +1391,9 @@ async function buildUserContextDocument(userId) {
     return "";
   }
 
-  return JSON.stringify(await buildPersonalContextJson(user), null, 2);
+  const context = await buildPersonalContextJson(user);
+  context.interviewerPlan = plan;
+  return JSON.stringify(context, null, 2);
 }
 
 async function buildInterviewContextDocument(sessionId) {
@@ -1387,6 +1489,7 @@ async function buildInterviewContextDocument(sessionId) {
 async function buildPersonalContextJson(user) {
   const domain = normalizeDomain(user.domain);
   const transcripts = await getUserTranscriptContext(user.id);
+  const interviewPlan = await getLatestInterviewPlan(user.id);
   const cases = await db.all(`
     SELECT domain, use_case, title, decision_statement, pattern_summary, context_summary,
            signals_json, constraints_json, actions_json, outcomes_json, updated_at
@@ -1421,12 +1524,13 @@ async function buildPersonalContextJson(user) {
     },
     interviewerInstructions: {
       openingBehavior: "Start first. Do not wait for the user to speak before asking the first question.",
-      openingQuestion: buildInterviewOpeningQuestion(user),
+      openingQuestion: interviewPlan?.openingQuestion || buildInterviewOpeningQuestion(user),
       usePersonalContext:
         "Use LinkedIn, resume, personal notes, future direction, and previous interview patterns to ask specific questions. Do not ask generic background questions when context already exists.",
       leadIntoDomainUseCases:
         "After opening, guide the interview toward domain use cases, asking for concrete examples, decision signals, constraints, options, tradeoffs, actions, outcomes, and lessons learned."
     },
+    interviewerPlan: interviewPlan,
     domainGuidance: {
       domain,
       useCases: model.useCases.map((useCase) => ({
@@ -1458,6 +1562,270 @@ async function buildPersonalContextJson(user) {
       createdAt: turn.created_at
     }))
   };
+}
+
+async function upsertInterviewPlanForUser(user) {
+  const fullUser = user?.resumeText ? user : await getUserById(user.id);
+  const plan = await buildInterviewerPlan(fullUser || user);
+  const contentHash = crypto.createHash("sha256").update(JSON.stringify({
+    ...plan,
+    generatedAt: ""
+  })).digest("hex");
+  const now = new Date().toISOString();
+  const existing = await db.get(`
+    SELECT id, plan_json
+    FROM interview_plans
+    WHERE user_id = ? AND content_hash = ?
+    ORDER BY id DESC
+    LIMIT 1
+  `, [user.id, contentHash]);
+
+  if (existing) {
+    await db.run("UPDATE interview_plans SET status = ?, updated_at = ? WHERE id = ?", ["active", now, existing.id]);
+    return { id: existing.id, ...parseJson(existing.plan_json, plan) };
+  }
+
+  const sql = databaseKind === "mysql"
+    ? `
+      INSERT INTO interview_plans (
+        user_id, domain, domain_path, role_archetype, plan_json,
+        content_hash, status, created_at, updated_at
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON DUPLICATE KEY UPDATE
+        status = VALUES(status),
+        updated_at = VALUES(updated_at)
+    `
+    : `
+      INSERT INTO interview_plans (
+        user_id, domain, domain_path, role_archetype, plan_json,
+        content_hash, status, created_at, updated_at
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(user_id, content_hash) DO UPDATE SET
+        status = excluded.status,
+        updated_at = excluded.updated_at
+    `;
+  const result = await db.run(sql, [
+    user.id,
+    plan.domain,
+    plan.domainPath,
+    plan.roleArchetype,
+    JSON.stringify(plan),
+    contentHash,
+    "active",
+    now,
+    now
+  ]);
+
+  return { id: result.lastInsertRowid || 0, ...plan };
+}
+
+async function getLatestInterviewPlan(userId) {
+  const row = await db.get(`
+    SELECT id, plan_json
+    FROM interview_plans
+    WHERE user_id = ?
+    ORDER BY updated_at DESC, id DESC
+    LIMIT 1
+  `, [userId]);
+
+  if (!row?.plan_json) {
+    return null;
+  }
+
+  return { id: row.id, ...parseJson(row.plan_json, {}) };
+}
+
+async function buildInterviewerPlan(user) {
+  const domain = normalizeDomain(user?.domain);
+  const cases = await db.all(`
+    SELECT use_case, title, pattern_summary, signals_json, constraints_json
+    FROM decision_cases
+    WHERE user_id = ?
+    ORDER BY updated_at DESC, id DESC
+    LIMIT 8
+  `, [user.id]);
+  const contextText = [
+    user?.name,
+    user?.linkedIn,
+    user?.domain,
+    user?.resumeFileName,
+    user?.resumeText,
+    user?.personalContext,
+    user?.futureDirection
+  ].filter(Boolean).join(" ").toLowerCase();
+  const domainPath = inferDomainPath(domain, contextText);
+  const roleArchetype = inferRoleArchetype(contextText, domainPath);
+  const questionStrategy = buildQuestionStrategy(domain, domainPath, roleArchetype);
+  const evidenceGaps = buildEvidenceGaps(domain, domainPath, cases);
+  const firstName = cleanValue(user?.firstName) || cleanValue(user?.name).split(/\s+/)[0] || "there";
+  const openingQuestion = buildPlannedOpeningQuestion(firstName, domain, domainPath, roleArchetype, evidenceGaps[0]);
+
+  return {
+    documentType: "my_choice_tavus_interviewer_brief",
+    schemaVersion: "interviewer_plan_v1",
+    generatedAt: new Date().toISOString(),
+    userId: user.id,
+    person: {
+      name: user.name,
+      firstName: user.firstName,
+      linkedIn: user.linkedIn,
+      resumeFileName: user.resumeFileName,
+      resumeTextAvailable: Boolean(cleanValue(user.resumeText)),
+      personalContextAvailable: Boolean(cleanValue(user.personalContext)),
+      futureDirection: user.futureDirection || ""
+    },
+    domain,
+    domainPath,
+    roleArchetype,
+    interviewGoal:
+      "Capture the person's decision expertise as evidence-backed domain knowledge. Ask about real situations, signals, constraints, options, tradeoffs, actions, outcomes, and lessons.",
+    openingQuestion,
+    questionStrategy,
+    evidenceGaps,
+    priorKnowledgeSignals: cases.map((item) => ({
+      useCase: item.use_case,
+      title: item.title,
+      pattern: item.pattern_summary,
+      signals: parseJson(item.signals_json, []).slice(0, 5),
+      constraints: parseJson(item.constraints_json, []).slice(0, 5)
+    })),
+    interviewerDo:
+      "Start first. Ask one concise question at a time. Use the person's profile and resume context. Probe for specific examples and decision details. Tie follow-ups to the detected domain path and role archetype.",
+    interviewerAvoid:
+      "Do not ask generic background questions when the answer is already in profile context. Do not ask for a resume walkthrough. Do not mention internal JSON, schemas, or knowledge graph."
+  };
+}
+
+function inferDomainPath(domain, contextText) {
+  if (domain === "Property Management") {
+    if (matchesAny(contextText, ["realpage", "yardi", "appfolio", "proptech", "saas", "software", "platform", "integration", "api", "data", "technology", "product"])) {
+      return "Property Management Technology / PropTech Platform";
+    }
+
+    if (matchesAny(contextText, ["asset", "portfolio", "noi", "revenue", "budget", "investor", "owner reporting"])) {
+      return "Property Asset and Portfolio Management";
+    }
+
+    if (matchesAny(contextText, ["lease", "leasing", "resident", "tenant", "maintenance", "vendor", "property operations"])) {
+      return "Property Operations";
+    }
+
+    return "Property Management Decision Operations";
+  }
+
+  if (domain === "Financial") {
+    if (matchesAny(contextText, ["forecast", "variance", "budget", "fp&a", "financial planning"])) {
+      return "Financial Planning and Analysis";
+    }
+
+    if (matchesAny(contextText, ["risk", "cash", "treasury", "compliance", "audit"])) {
+      return "Financial Risk and Controls";
+    }
+
+    if (matchesAny(contextText, ["reporting", "dashboard", "data", "analytics", "kpi"])) {
+      return "Financial Analytics and Reporting";
+    }
+
+    return "Financial Management Decision Operations";
+  }
+
+  return `${domain || "General"} Decision Operations`;
+}
+
+function inferRoleArchetype(contextText, domainPath) {
+  if (matchesAny(contextText, ["cto", "technology", "software", "platform", "product", "engineering", "implementation", "integration", "api"])) {
+    return domainPath.includes("Property")
+      ? "PropTech technology and platform decision-maker"
+      : "Technology-enabled operations decision-maker";
+  }
+
+  if (matchesAny(contextText, ["operations", "operator", "process", "workflow", "implementation", "vendor"])) {
+    return "Operations and workflow decision-maker";
+  }
+
+  if (matchesAny(contextText, ["sales", "customer", "client", "go-to-market", "account", "revenue"])) {
+    return "Commercial and customer decision-maker";
+  }
+
+  if (matchesAny(contextText, ["finance", "budget", "forecast", "noi", "variance", "reporting"])) {
+    return "Finance and performance decision-maker";
+  }
+
+  return "Domain expertise decision-maker";
+}
+
+function buildQuestionStrategy(domain, domainPath, roleArchetype) {
+  const core = [
+    "Ask for a real decision, not a general opinion.",
+    "Ask what signals made the decision important.",
+    "Ask what options were considered and why some were rejected.",
+    "Ask what constraints shaped the final choice.",
+    "Ask what happened after the decision and what the person learned."
+  ];
+
+  if (domainPath.includes("PropTech")) {
+    return [
+      `Anchor questions in ${domainPath} and ${roleArchetype}.`,
+      "Probe how property management operators, owners, vendors, residents, data, integrations, and workflows affected the decision.",
+      "Ask where software changed the decision process, not just where software was used.",
+      "Ask how the person balanced user adoption, implementation risk, data quality, compliance, cost, and customer outcomes.",
+      ...core
+    ];
+  }
+
+  if (domain === "Property Management") {
+    return [
+      `Anchor questions in ${domainPath}.`,
+      "Probe tenant/resident experience, maintenance workflows, leasing, owner reporting, vendors, compliance, occupancy, costs, and asset performance.",
+      ...core
+    ];
+  }
+
+  if (domain === "Financial") {
+    return [
+      `Anchor questions in ${domainPath}.`,
+      "Probe forecasts, budget variance, risk, cash flow, reporting, approvals, scenarios, and executive decision support.",
+      ...core
+    ];
+  }
+
+  return core;
+}
+
+function buildEvidenceGaps(domain, domainPath, cases) {
+  const knownUseCases = new Set(cases.map((item) => cleanValue(item.use_case).toLowerCase()));
+  const model = getDomainDecisionModel(domain);
+  const gaps = model.useCases
+    .filter((useCase) => !knownUseCases.has(cleanValue(useCase.name).toLowerCase()))
+    .slice(0, 4)
+    .map((useCase) => ({
+      useCase: useCase.name,
+      questionFocus: useCase.decision,
+      targetSignals: useCase.signals.slice(0, 5),
+      targetConstraints: useCase.constraints.slice(0, 5)
+    }));
+
+  if (domainPath.includes("PropTech")) {
+    gaps.unshift({
+      useCase: "technology_enablement_decision",
+      questionFocus: "How technology, data, integrations, and workflow design changed a property management decision.",
+      targetSignals: ["operator adoption", "data quality", "integration complexity", "customer impact", "implementation risk"],
+      targetConstraints: ["budget", "timeline", "legacy systems", "compliance", "stakeholder alignment"]
+    });
+  }
+
+  return gaps;
+}
+
+function buildPlannedOpeningQuestion(firstName, domain, domainPath, roleArchetype, firstGap) {
+  const focus = firstGap?.questionFocus || `a real decision you made in ${domain}`;
+  return `Hi ${firstName}, I am Alma. I reviewed your profile and resume context. I see your work connects to ${domainPath}, especially as a ${roleArchetype}. Let's start with a real example: ${focus} What was the situation, what signals did you pay attention to, and what tradeoffs made the decision hard?`;
+}
+
+function matchesAny(text, terms) {
+  return terms.some((term) => text.includes(term));
 }
 
 function buildPublicContextDocumentUrl(scope, scopeId) {
@@ -2609,6 +2977,21 @@ function openSqliteDatabase(filePath) {
       updated_at TEXT NOT NULL
     );
 
+    CREATE TABLE IF NOT EXISTS interview_plans (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER NOT NULL,
+      domain TEXT NOT NULL,
+      domain_path TEXT,
+      role_archetype TEXT,
+      plan_json TEXT NOT NULL,
+      content_hash TEXT NOT NULL,
+      status TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      UNIQUE(user_id, content_hash),
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    );
+
     CREATE TABLE IF NOT EXISTS domain_udm_concepts (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       domain TEXT NOT NULL,
@@ -3138,6 +3521,7 @@ class SqliteAdapter {
       structuredOutputs: Number(this.get("SELECT COUNT(*) AS count FROM structured_interview_outputs").count || 0),
       udmConcepts: Number(this.get("SELECT COUNT(*) AS count FROM domain_udm_concepts").count || 0),
       decisionCases: Number(this.get("SELECT COUNT(*) AS count FROM decision_cases").count || 0),
+      interviewPlans: Number(this.get("SELECT COUNT(*) AS count FROM interview_plans").count || 0),
       tavusDocumentSyncs: Number(this.get("SELECT COUNT(*) AS count FROM tavus_document_syncs").count || 0)
     };
   }
@@ -3269,6 +3653,21 @@ class MySqlAdapter {
         source_json LONGTEXT,
         created_at VARCHAR(40) NOT NULL,
         updated_at VARCHAR(40) NOT NULL
+      )`,
+      `CREATE TABLE IF NOT EXISTS interview_plans (
+        id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+        user_id INT NOT NULL,
+        domain VARCHAR(120) NOT NULL,
+        domain_path VARCHAR(255),
+        role_archetype VARCHAR(255),
+        plan_json LONGTEXT NOT NULL,
+        content_hash VARCHAR(128) NOT NULL,
+        status VARCHAR(80) NOT NULL,
+        created_at VARCHAR(40) NOT NULL,
+        updated_at VARCHAR(40) NOT NULL,
+        UNIQUE KEY unique_interview_plan (user_id, content_hash),
+        INDEX idx_interview_plans_user_id (user_id),
+        CONSTRAINT fk_interview_plans_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
       )`,
       `CREATE TABLE IF NOT EXISTS domain_udm_concepts (
         id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
@@ -3642,6 +4041,7 @@ class MySqlAdapter {
       structuredOutputs,
       udmConcepts,
       decisionCases,
+      interviewPlans,
       tavusDocumentSyncs
     ] = await Promise.all([
       this.get("SELECT COUNT(*) AS count FROM users"),
@@ -3650,6 +4050,7 @@ class MySqlAdapter {
       this.get("SELECT COUNT(*) AS count FROM structured_interview_outputs"),
       this.get("SELECT COUNT(*) AS count FROM domain_udm_concepts"),
       this.get("SELECT COUNT(*) AS count FROM decision_cases"),
+      this.get("SELECT COUNT(*) AS count FROM interview_plans"),
       this.get("SELECT COUNT(*) AS count FROM tavus_document_syncs")
     ]);
 
@@ -3660,6 +4061,7 @@ class MySqlAdapter {
       structuredOutputs: Number(structuredOutputs?.count || 0),
       udmConcepts: Number(udmConcepts?.count || 0),
       decisionCases: Number(decisionCases?.count || 0),
+      interviewPlans: Number(interviewPlans?.count || 0),
       tavusDocumentSyncs: Number(tavusDocumentSyncs?.count || 0)
     };
   }
