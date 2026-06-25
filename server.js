@@ -703,6 +703,8 @@ async function updateProfile(req, res) {
     domain,
     personalContext: cleanValue(body.personalContext),
     futureDirection: cleanValue(body.futureDirection),
+    firstName,
+    lastName,
     resume,
     updatedAt: now
   });
@@ -862,7 +864,7 @@ async function serveContextDocument(req, res, url, scope, rawScopeId) {
   }
 
   res.writeHead(200, {
-    "Content-Type": scope === "interview" ? "application/json; charset=utf-8" : "text/plain; charset=utf-8",
+    "Content-Type": ["interview", "user"].includes(scope) ? "application/json; charset=utf-8" : "text/plain; charset=utf-8",
     "Cache-Control": "no-store, max-age=0"
   });
   res.end(text);
@@ -874,6 +876,7 @@ async function buildConversationContext(user) {
   const domain = normalizeDomain(user?.domain);
   const sharedContext = await getSharedDomainContext(domain);
   const knowledgeSummary = await getDomainKnowledgeSummaryForConversation(domain);
+  const personalJsonContext = user?.id ? await buildUserContextDocument(user.id) : "";
   const parts = ["This is a My Choice decision capture session started from the local web app."];
 
   if (name) {
@@ -916,6 +919,10 @@ async function buildConversationContext(user) {
     parts.push(`Future career direction: ${user.futureDirection}`);
   }
 
+  if (personalJsonContext) {
+    parts.push(`Personal JSON context already loaded for this user: ${personalJsonContext.slice(0, 3500)}`);
+  }
+
   parts.push(
     `Opening behavior: start the interview immediately. Do not wait for the user to speak first. Begin with this question: "${buildInterviewOpeningQuestion(user)}"`,
     "Interview objective: ask targeted questions that fill missing decision knowledge. Capture the user's real expertise, signals they use, constraints, options, tradeoffs, actions, outcomes, and examples. Ask concise follow-up questions when an answer is vague."
@@ -927,8 +934,32 @@ async function buildConversationContext(user) {
 function buildInterviewOpeningQuestion(user) {
   const firstName = cleanValue(user?.firstName) || cleanValue(user?.name).split(/\s+/)[0] || "there";
   const domain = normalizeDomain(user?.domain);
+  const anchor = buildPersonalOpeningAnchor(user);
+  const useCase = getDomainDecisionModel(domain).useCases[0];
 
-  return `Hi ${firstName}, I am Alma. I will lead this My Choice interview. To start, tell me about a recent ${domain} decision you had to make, what made it important, and what information you used to decide.`;
+  return `Hi ${firstName}, I am Alma. I reviewed your ${anchor}. I will start with ${domain}. Thinking about ${useCase.name.toLowerCase()}, tell me about a real decision you made, what made it important, what information you used, and what tradeoffs you had to manage.`;
+}
+
+function buildPersonalOpeningAnchor(user) {
+  const anchors = [];
+
+  if (user?.linkedIn) {
+    anchors.push("LinkedIn profile");
+  }
+
+  if (user?.resumeFileName || user?.resumeText) {
+    anchors.push("resume");
+  }
+
+  if (user?.personalContext) {
+    anchors.push("personal context");
+  }
+
+  if (user?.futureDirection) {
+    anchors.push("future direction");
+  }
+
+  return anchors.length ? anchors.join(", ") : "saved profile context";
 }
 
 async function getSharedDomainContext(domain) {
@@ -1127,47 +1158,23 @@ async function buildDomainContextDocument(domain) {
 }
 
 async function buildUserContextDocument(userId) {
+  const row = await db.get(`
+    SELECT context_json
+    FROM personal_contexts
+    WHERE user_id = ?
+  `, [userId]);
+
+  if (row?.context_json) {
+    return row.context_json;
+  }
+
   const user = await getUserById(userId);
 
   if (!user) {
     return "";
   }
 
-  const transcripts = await getUserTranscriptContext(user.id);
-  const cases = await db.all(`
-    SELECT domain, use_case, title, pattern_summary, context_summary, updated_at
-    FROM decision_cases
-    WHERE user_id = ?
-    ORDER BY updated_at DESC, id DESC
-    LIMIT 20
-  `, [user.id]);
-
-  return [
-    `My Choice Personal Interview Context`,
-    `User: ${user.name || user.email}`,
-    `Domain: ${normalizeDomain(user.domain)}`,
-    `LinkedIn: ${user.linkedIn || "not provided"}`,
-    `Resume file: ${user.resumeFileName || "not provided"}`,
-    ``,
-    `Personal Context`,
-    user.personalContext || "No personal notes provided.",
-    ``,
-    `Future Direction`,
-    user.futureDirection || "No future direction provided.",
-    ``,
-    `Resume Text`,
-    user.resumeText ? user.resumeText.slice(0, 8000) : "Resume file stored; text extraction unavailable for this file type.",
-    ``,
-    `Previous Interview Decision Cases`,
-    ...(cases.length
-      ? cases.map((item) => `- ${item.domain} / ${item.use_case}: ${item.pattern_summary || item.context_summary || item.title}`)
-      : ["- No decision cases extracted yet."]),
-    ``,
-    `Recent Transcript Evidence`,
-    ...(transcripts.length
-      ? transcripts.slice(-30).map((turn) => `- ${turn.speaker || turn.speaker_role || "speaker"}: ${turn.text}`)
-      : ["- No transcript evidence captured yet."])
-  ].join("\n");
+  return JSON.stringify(await buildPersonalContextJson(user), null, 2);
 }
 
 async function buildInterviewContextDocument(sessionId) {
@@ -1260,10 +1267,86 @@ async function buildInterviewContextDocument(sessionId) {
   return JSON.stringify(document, null, 2);
 }
 
+async function buildPersonalContextJson(user) {
+  const domain = normalizeDomain(user.domain);
+  const transcripts = await getUserTranscriptContext(user.id);
+  const cases = await db.all(`
+    SELECT domain, use_case, title, decision_statement, pattern_summary, context_summary,
+           signals_json, constraints_json, actions_json, outcomes_json, updated_at
+    FROM decision_cases
+    WHERE user_id = ?
+    ORDER BY updated_at DESC, id DESC
+    LIMIT 20
+  `, [user.id]);
+  const model = getDomainDecisionModel(domain);
+
+  return {
+    documentType: "my_choice_personal_context",
+    schemaVersion: "personal_context_v1",
+    generatedAt: new Date().toISOString(),
+    user: {
+      id: user.id,
+      name: user.name,
+      email: user.email,
+      firstName: user.firstName,
+      lastName: user.lastName,
+      linkedIn: user.linkedIn,
+      domain,
+      resume: {
+        fileName: user.resumeFileName,
+        mimeType: user.resumeMimeType,
+        sizeBytes: user.resumeSizeBytes,
+        uploadedAt: user.resumeUploadedAt,
+        extractedText: cleanValue(user.resumeText).slice(0, 12000)
+      },
+      personalContext: user.personalContext,
+      futureDirection: user.futureDirection
+    },
+    interviewerInstructions: {
+      openingBehavior: "Start first. Do not wait for the user to speak before asking the first question.",
+      openingQuestion: buildInterviewOpeningQuestion(user),
+      usePersonalContext:
+        "Use LinkedIn, resume, personal notes, future direction, and previous interview patterns to ask specific questions. Do not ask generic background questions when context already exists.",
+      leadIntoDomainUseCases:
+        "After opening, guide the interview toward domain use cases, asking for concrete examples, decision signals, constraints, options, tradeoffs, actions, outcomes, and lessons learned."
+    },
+    domainGuidance: {
+      domain,
+      useCases: model.useCases.map((useCase) => ({
+        name: useCase.name,
+        title: useCase.title,
+        decision: useCase.decision,
+        targetSignals: useCase.signals,
+        targetConstraints: useCase.constraints,
+        targetEntities: useCase.entities
+      }))
+    },
+    previousDecisionKnowledge: cases.map((item) => ({
+      domain: item.domain,
+      useCase: item.use_case,
+      title: item.title,
+      decision: item.decision_statement,
+      context: item.context_summary,
+      pattern: item.pattern_summary,
+      signals: parseJson(item.signals_json, []),
+      constraints: parseJson(item.constraints_json, []),
+      actions: parseJson(item.actions_json, []),
+      outcomes: parseJson(item.outcomes_json, []),
+      updatedAt: item.updated_at
+    })),
+    recentTranscriptEvidence: transcripts.slice(-30).map((turn) => ({
+      speaker: turn.speaker || turn.speaker_role || "speaker",
+      text: turn.text,
+      domain: turn.domain,
+      createdAt: turn.created_at
+    }))
+  };
+}
+
 function buildPublicContextDocumentUrl(scope, scopeId) {
   const base = publicCallbackBaseUrl.replace(/\/$/, "");
   const token = getTavusDocumentToken(scope, scopeId);
-  const extension = scope === "interview" ? "json" : "txt";
+  const extension = ["interview", "user"].includes(scope) ? "json" : "txt";
   return `${base}/context-documents/${scope}/${encodeURIComponent(scopeId)}.${extension}?token=${encodeURIComponent(token)}`;
 }
 
@@ -2340,6 +2423,7 @@ function openSqliteDatabase(filePath) {
       domain TEXT,
       context_text TEXT,
       future_direction TEXT,
+      context_json TEXT,
       source_json TEXT,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL,
@@ -2512,6 +2596,7 @@ function openSqliteDatabase(filePath) {
   ensureColumn(database, "users", "resume_text", "TEXT");
   ensureColumn(database, "users", "resume_uploaded_at", "TEXT");
   ensureColumn(database, "personal_contexts", "future_direction", "TEXT");
+  ensureColumn(database, "personal_contexts", "context_json", "TEXT");
   return adapter;
 }
 
@@ -2543,6 +2628,22 @@ async function openMySqlDatabase() {
 
 async function upsertPersonalContext(userId, context) {
   const now = context.updatedAt || new Date().toISOString();
+  const existingUser = await getUserById(userId);
+  const contextUser = {
+    ...(existingUser || {}),
+    firstName: context.firstName || existingUser?.firstName || "",
+    lastName: context.lastName || existingUser?.lastName || "",
+    linkedIn: context.linkedIn || "",
+    domain: context.domain || "",
+    resumeFileName: context.resume?.fileName || existingUser?.resumeFileName || "",
+    resumeMimeType: context.resume?.mimeType || existingUser?.resumeMimeType || "",
+    resumeSizeBytes: context.resume?.sizeBytes || existingUser?.resumeSizeBytes || 0,
+    resumeText: context.resume?.extractedText || existingUser?.resumeText || "",
+    resumeUploadedAt: context.resume ? now : existingUser?.resumeUploadedAt || "",
+    personalContext: context.personalContext || "",
+    futureDirection: context.futureDirection || ""
+  };
+  const personalContextJson = JSON.stringify(await buildPersonalContextJson(contextUser), null, 2);
   const source = JSON.stringify({
     linkedIn: context.linkedIn,
     domain: context.domain,
@@ -2559,6 +2660,7 @@ async function upsertPersonalContext(userId, context) {
     context.domain,
     context.personalContext,
     context.futureDirection,
+    personalContextJson,
     source,
     now,
     now
@@ -2619,20 +2721,21 @@ class SqliteAdapter {
     ]);
   }
 
-  upsertPersonalContext(userId, linkedIn, domain, contextText, futureDirection, source, createdAt, updatedAt) {
+  upsertPersonalContext(userId, linkedIn, domain, contextText, futureDirection, contextJson, source, createdAt, updatedAt) {
     return this.run(`
       INSERT INTO personal_contexts (
-        user_id, linkedin_url, domain, context_text, future_direction, source_json, created_at, updated_at
+        user_id, linkedin_url, domain, context_text, future_direction, context_json, source_json, created_at, updated_at
       )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(user_id) DO UPDATE SET
         linkedin_url = excluded.linkedin_url,
         domain = excluded.domain,
         context_text = excluded.context_text,
         future_direction = excluded.future_direction,
+        context_json = excluded.context_json,
         source_json = excluded.source_json,
         updated_at = excluded.updated_at
-    `, [userId, linkedIn, domain, contextText, futureDirection, source, createdAt, updatedAt]);
+    `, [userId, linkedIn, domain, contextText, futureDirection, contextJson, source, createdAt, updatedAt]);
   }
 
   upsertStructuredOutput(sessionId, domain, schemaVersion, structuredJson, confidenceJson, createdAt, updatedAt) {
@@ -2925,6 +3028,7 @@ class MySqlAdapter {
         domain VARCHAR(120),
         context_text LONGTEXT,
         future_direction LONGTEXT,
+        context_json LONGTEXT,
         source_json LONGTEXT,
         created_at VARCHAR(40) NOT NULL,
         updated_at VARCHAR(40) NOT NULL,
@@ -3080,6 +3184,22 @@ class MySqlAdapter {
     for (const statement of statements) {
       await this.pool.execute(statement);
     }
+
+    await this.ensureColumn("personal_contexts", "context_json", "LONGTEXT");
+  }
+
+  async ensureColumn(tableName, columnName, columnType) {
+    const [rows] = await this.pool.execute(`
+      SELECT COLUMN_NAME
+      FROM INFORMATION_SCHEMA.COLUMNS
+      WHERE TABLE_SCHEMA = DATABASE()
+        AND TABLE_NAME = ?
+        AND COLUMN_NAME = ?
+    `, [tableName, columnName]);
+
+    if (!rows.length) {
+      await this.pool.execute(`ALTER TABLE ${tableName} ADD COLUMN ${columnName} ${columnType}`);
+    }
   }
 
   upsertAuthenticatedUser(user) {
@@ -3105,20 +3225,21 @@ class MySqlAdapter {
     ]);
   }
 
-  upsertPersonalContext(userId, linkedIn, domain, contextText, futureDirection, source, createdAt, updatedAt) {
+  upsertPersonalContext(userId, linkedIn, domain, contextText, futureDirection, contextJson, source, createdAt, updatedAt) {
     return this.run(`
       INSERT INTO personal_contexts (
-        user_id, linkedin_url, domain, context_text, future_direction, source_json, created_at, updated_at
+        user_id, linkedin_url, domain, context_text, future_direction, context_json, source_json, created_at, updated_at
       )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON DUPLICATE KEY UPDATE
         linkedin_url = VALUES(linkedin_url),
         domain = VALUES(domain),
         context_text = VALUES(context_text),
         future_direction = VALUES(future_direction),
+        context_json = VALUES(context_json),
         source_json = VALUES(source_json),
         updated_at = VALUES(updated_at)
-    `, [userId, linkedIn, domain, contextText, futureDirection, source, createdAt, updatedAt]);
+    `, [userId, linkedIn, domain, contextText, futureDirection, contextJson, source, createdAt, updatedAt]);
   }
 
   upsertStructuredOutput(sessionId, domain, schemaVersion, structuredJson, confidenceJson, createdAt, updatedAt) {
