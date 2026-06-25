@@ -147,6 +147,7 @@ const server = http.createServer(async (req, res) => {
 async function bootstrap() {
   db = await openDatabase(databasePath);
   await seedDomainUdm();
+  await backfillPersonalContextResumeMetadata();
   await rebuildDecisionKnowledgeForExistingSessions();
   server.listen(port, host, () => {
     console.log(`Interview Me app listening on http://${host}:${port}`);
@@ -2782,6 +2783,68 @@ async function upsertPersonalContext(userId, context) {
     now,
     now
   );
+}
+
+async function backfillPersonalContextResumeMetadata() {
+  const rows = await db.all(`
+    SELECT users.id, users.name, users.first_name, users.last_name, users.linkedin,
+           users.domain, users.resume_file_name, users.resume_mime_type,
+           users.resume_size_bytes, users.resume_text, users.resume_uploaded_at,
+           personal_contexts.context_text, personal_contexts.future_direction,
+           personal_contexts.source_json
+    FROM users
+    JOIN personal_contexts ON personal_contexts.user_id = users.id
+    WHERE users.resume_file_name IS NOT NULL AND users.resume_file_name <> ''
+  `);
+
+  for (const row of rows) {
+    const source = parseJson(row.source_json, {});
+    const resumeAlreadyCurrent =
+      source.resumeFileName === row.resume_file_name &&
+      Number(source.resumeSizeBytes || 0) === Number(row.resume_size_bytes || 0);
+
+    if (resumeAlreadyCurrent) {
+      continue;
+    }
+
+    const now = new Date().toISOString();
+    const contextUser = {
+      id: row.id,
+      name: row.name,
+      firstName: row.first_name || "",
+      lastName: row.last_name || "",
+      linkedIn: row.linkedin || "",
+      domain: row.domain || "",
+      resumeFileName: row.resume_file_name || "",
+      resumeMimeType: row.resume_mime_type || "",
+      resumeSizeBytes: row.resume_size_bytes || 0,
+      resumeText: row.resume_text || "",
+      resumeUploadedAt: row.resume_uploaded_at || "",
+      personalContext: row.context_text || "",
+      futureDirection: row.future_direction || ""
+    };
+    const contextJson = JSON.stringify(await buildPersonalContextJson(contextUser), null, 2);
+    const sourceJson = JSON.stringify({
+      ...source,
+      linkedIn: source.linkedIn || row.linkedin || "",
+      domain: source.domain || row.domain || "",
+      futureDirection: source.futureDirection || row.future_direction || "",
+      resumeFileName: row.resume_file_name || undefined,
+      resumeMimeType: row.resume_mime_type || undefined,
+      resumeSizeBytes: row.resume_size_bytes || undefined,
+      resumeUploadedAt: row.resume_uploaded_at || undefined,
+      resumeTextAvailable: Boolean(row.resume_text),
+      source: source.source || "profile"
+    });
+
+    await db.run(`
+      UPDATE personal_contexts
+      SET context_json = ?,
+          source_json = ?,
+          updated_at = ?
+      WHERE user_id = ?
+    `, [contextJson, sourceJson, now, row.id]);
+  }
 }
 
 function ensureColumn(database, tableName, columnName, columnType) {
