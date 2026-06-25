@@ -1021,6 +1021,8 @@ async function syncTavusContextDocument(scope, scopeId, domain) {
 
   let tavusResponse;
   let data = {};
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 10000);
 
   try {
     tavusResponse = await fetch("https://tavusapi.com/v2/documents", {
@@ -1029,6 +1031,7 @@ async function syncTavusContextDocument(scope, scopeId, domain) {
         "Content-Type": "application/json",
         "x-api-key": tavusApiKey
       },
+      signal: controller.signal,
       body: JSON.stringify({
         document_url: documentUrl,
         document_name: documentName,
@@ -1038,6 +1041,8 @@ async function syncTavusContextDocument(scope, scopeId, domain) {
     data = await tavusResponse.json().catch(() => ({}));
   } catch (error) {
     data = { error: error instanceof Error ? error.message : "Tavus document upload failed" };
+  } finally {
+    clearTimeout(timeout);
   }
 
   const documentId = cleanValue(data.document_id || data.id);
@@ -1669,11 +1674,11 @@ async function rebuildDecisionKnowledgeForExistingSessions() {
   `);
 
   for (const session of sessions) {
-    await extractDecisionKnowledgeForSession(session.id);
+    await extractDecisionKnowledgeForSession(session.id, { syncTavus: false });
   }
 }
 
-async function extractDecisionKnowledgeForSession(sessionId) {
+async function extractDecisionKnowledgeForSession(sessionId, options = {}) {
   const session = await db.get(`
     SELECT id, user_id, domain, created_at
     FROM interview_sessions
@@ -1712,6 +1717,10 @@ async function extractDecisionKnowledgeForSession(sessionId) {
       await db.replaceDecisionEvidence(caseId, decisionCase.evidenceTurnIds);
       await db.replaceDecisionEntities(caseId, decisionCase.entities);
     }
+  }
+
+  if (options.syncTavus === false) {
+    return;
   }
 
   const user = await getUserById(session.user_id);
