@@ -227,7 +227,12 @@ async function createTavusConversation(req, res) {
   const conversationContext = await buildConversationContext(sessionUser, interviewPlan);
   const syncedDocumentIds = await getConversationTavusDocumentIds(sessionUser);
   const documentIds = [...new Set([...tavusDocumentIds, ...syncedDocumentIds])];
-  const dynamicDocumentTags = [...new Set([...tavusDocumentTags, `domain:${slugify(sessionUser.domain)}`])];
+  const dynamicDocumentTags = [
+    ...new Set([
+      ...tavusDocumentTags.map((tag) => tavusSafeTag(tag)),
+      buildDomainTavusTag(sessionUser.domain)
+    ].filter(Boolean))
+  ];
   const customGreeting = interviewPlan.openingQuestion || buildInterviewOpeningQuestion(sessionUser);
   const tavusRequestBody = {
     ...(personaId ? { persona_id: personaId } : {}),
@@ -1222,8 +1227,8 @@ async function syncTavusContextDocument(scope, scopeId, domain, options = {}) {
   const tags = [
     "my-choice",
     scope,
-    `domain:${slugify(domain || scopeId)}`
-  ];
+    buildDomainTavusTag(domain || scopeId)
+  ].map((tag) => tavusSafeTag(tag)).filter(Boolean);
 
   let tavusResponse;
   let data = {};
@@ -4078,6 +4083,18 @@ function parseEnvList(value) {
     .split(",")
     .map((item) => item.trim())
     .filter(Boolean);
+}
+
+function buildDomainTavusTag(domain) {
+  return `domain-${slugify(domain)}`;
+}
+
+function tavusSafeTag(value) {
+  return cleanValue(value)
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 64);
 }
 
 function slugify(value) {
