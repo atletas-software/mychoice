@@ -1301,6 +1301,70 @@ async function syncTavusContextDocument(scope, scopeId, domain, options = {}) {
     syncedAt: now,
     now
   });
+
+  if (ok && documentId) {
+    await deleteSupersededTavusDocuments(scope, scopeId, documentId, now);
+  }
+}
+
+async function deleteSupersededTavusDocuments(scope, scopeId, keepDocumentId, now) {
+  const rows = await db.all(`
+    SELECT id, document_id, metadata_json
+    FROM tavus_document_syncs
+    WHERE scope = ?
+      AND scope_id = ?
+      AND status = 'uploaded'
+      AND document_id IS NOT NULL
+      AND document_id <> ''
+      AND document_id <> ?
+  `, [scope, scopeId, keepDocumentId]);
+
+  for (const row of rows) {
+    const deleteResult = await deleteTavusDocument(row.document_id);
+    const metadata = parseJson(row.metadata_json, {});
+
+    await db.run(`
+      UPDATE tavus_document_syncs
+      SET status = ?,
+          metadata_json = ?,
+          updated_at = ?
+      WHERE id = ?
+    `, [
+      deleteResult.ok ? "superseded" : "delete_failed",
+      JSON.stringify({
+        ...metadata,
+        superseded_by_document_id: keepDocumentId,
+        tavus_delete_response: deleteResult.response,
+        tavus_delete_http_status: deleteResult.status
+      }),
+      now,
+      row.id
+    ]);
+  }
+}
+
+async function deleteTavusDocument(documentId) {
+  try {
+    const response = await fetch(`https://tavusapi.com/v2/documents/${encodeURIComponent(documentId)}`, {
+      method: "DELETE",
+      headers: {
+        "x-api-key": tavusApiKey
+      }
+    });
+    const data = await response.json().catch(() => ({}));
+
+    return {
+      ok: response.ok || response.status === 404,
+      status: response.status,
+      response: data
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      status: 0,
+      response: { error: error instanceof Error ? error.message : "Unable to delete Tavus document." }
+    };
+  }
 }
 
 async function buildDomainContextDocument(domain) {
@@ -3499,11 +3563,21 @@ class SqliteAdapter {
     `, [scope, scopeId]);
   }
 
+  getLatestUploadedTavusDocumentSync(scope, scopeId) {
+    return this.get(`
+      SELECT *
+      FROM tavus_document_syncs
+      WHERE scope = ? AND scope_id = ? AND status = 'uploaded' AND document_id IS NOT NULL AND document_id <> ''
+      ORDER BY updated_at DESC, id DESC
+      LIMIT 1
+    `, [scope, scopeId]);
+  }
+
   listLatestTavusDocumentIds(scopePairs) {
     const ids = [];
 
     for (const pair of scopePairs) {
-      const row = this.getLatestTavusDocumentSync(pair.scope, pair.scopeId);
+      const row = this.getLatestUploadedTavusDocumentSync(pair.scope, pair.scopeId);
 
       if (row?.document_id) {
         ids.push(row.document_id);
@@ -4019,11 +4093,21 @@ class MySqlAdapter {
     `, [scope, scopeId]);
   }
 
+  async getLatestUploadedTavusDocumentSync(scope, scopeId) {
+    return this.get(`
+      SELECT *
+      FROM tavus_document_syncs
+      WHERE scope = ? AND scope_id = ? AND status = 'uploaded' AND document_id IS NOT NULL AND document_id <> ''
+      ORDER BY updated_at DESC, id DESC
+      LIMIT 1
+    `, [scope, scopeId]);
+  }
+
   async listLatestTavusDocumentIds(scopePairs) {
     const ids = [];
 
     for (const pair of scopePairs) {
-      const row = await this.getLatestTavusDocumentSync(pair.scope, pair.scopeId);
+      const row = await this.getLatestUploadedTavusDocumentSync(pair.scope, pair.scopeId);
 
       if (row?.document_id) {
         ids.push(row.document_id);
