@@ -783,7 +783,8 @@ async function updateProfile(req, res) {
   });
 
   const user = await getUserById(sessionUser.id);
-  await syncContextForTavus(user);
+  await upsertInterviewPlanForUser(user);
+  await syncContextForTavus(user, { force: true });
   sendJson(res, 200, { user });
 }
 
@@ -795,6 +796,7 @@ async function syncTavusProfileContext(req, res) {
     return;
   }
 
+  await upsertInterviewPlanForUser(sessionUser);
   await syncContextForTavus(sessionUser, { force: true });
   const logs = await db.all(`
     SELECT id, scope, scope_id, domain, document_name, document_id, status,
