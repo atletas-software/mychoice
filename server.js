@@ -1219,16 +1219,9 @@ async function syncTavusContextDocument(scope, scopeId, domain, options = {}) {
 
   const now = new Date().toISOString();
   const documentUrl = buildPublicContextDocumentUrl(scope, scopeId);
-  const documentName = scope === "domain"
-    ? `My Choice Domain Context - ${scopeId}`
-    : scope === "interview"
-      ? `My Choice Interview Context - Session ${scopeId}`
-      : `My Choice Personal Context - User ${scopeId}`;
-  const tags = [
-    "my-choice",
-    scope,
-    buildDomainTavusTag(domain || scopeId)
-  ].map((tag) => tavusSafeTag(tag)).filter(Boolean);
+  const documentMetadata = await buildTavusDocumentMetadata(scope, scopeId, domain);
+  const documentName = documentMetadata.name;
+  const tags = documentMetadata.tags.map((tag) => tavusSafeTag(tag)).filter(Boolean);
 
   let tavusResponse;
   let data = {};
@@ -4087,6 +4080,60 @@ function parseEnvList(value) {
 
 function buildDomainTavusTag(domain) {
   return `domain-${slugify(domain)}`;
+}
+
+async function buildTavusDocumentMetadata(scope, scopeId, domain) {
+  const normalizedDomain = normalizeDomain(domain || scopeId);
+  const baseTags = ["my-choice", buildDomainTavusTag(normalizedDomain)];
+
+  if (scope === "domain") {
+    return {
+      name: `My Choice - ${normalizedDomain} - Shared Domain Knowledge`,
+      tags: [
+        ...baseTags,
+        "shared-domain-context",
+        "domain-knowledge"
+      ]
+    };
+  }
+
+  if (scope === "interview") {
+    const session = await db.get(`
+      SELECT interview_sessions.id, interview_sessions.domain, users.name
+      FROM interview_sessions
+      JOIN users ON users.id = interview_sessions.user_id
+      WHERE interview_sessions.id = ?
+    `, [Number(scopeId)]);
+    const sessionDomain = normalizeDomain(session?.domain || normalizedDomain);
+    const personSlug = session?.name ? `user-${slugify(session.name)}` : `user-${scopeId}`;
+
+    return {
+      name: `My Choice - ${session?.name || "User"} - Interview ${scopeId} Knowledge`,
+      tags: [
+        "my-choice",
+        buildDomainTavusTag(sessionDomain),
+        "interview-context",
+        "decision-evidence",
+        `session-${scopeId}`,
+        personSlug
+      ]
+    };
+  }
+
+  const user = await getUserById(Number(scopeId));
+  const personName = user?.name || `User ${scopeId}`;
+  const userDomain = normalizeDomain(user?.domain || normalizedDomain);
+
+  return {
+    name: `My Choice - ${personName} - Interviewer Brief`,
+    tags: [
+      "my-choice",
+      buildDomainTavusTag(userDomain),
+      "personal-context",
+      "interviewer-brief",
+      `user-${slugify(personName)}`
+    ]
+  };
 }
 
 function tavusSafeTag(value) {
