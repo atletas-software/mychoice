@@ -68,6 +68,11 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
+    if (req.method === "POST" && url.pathname === "/api/test-interviews") {
+      await createTestInterview(req, res);
+      return;
+    }
+
     if (req.method === "GET" && url.pathname === "/api/tavus/document-syncs") {
       await getTavusDocumentSyncLogs(req, res);
       return;
@@ -378,6 +383,116 @@ async function getDecisionKnowledge(req, res, url) {
       createdAt: item.created_at,
       updatedAt: item.updated_at
     }))
+  });
+}
+
+async function createTestInterview(req, res) {
+  const sessionUser = await getSessionUser(req);
+
+  if (!sessionUser) {
+    sendJson(res, 401, { error: "Sign in to create a test interview." });
+    return;
+  }
+
+  const body = await readJsonBody(req);
+  const domain = normalizeDomain(cleanValue(body.domain) || sessionUser.domain || "Property Management");
+  const title = cleanValue(body.title) || "Manual test interview";
+  const rawTurns = Array.isArray(body.turns) ? body.turns : [];
+  const pairs = rawTurns
+    .map((turn) => ({
+      question: cleanValue(turn.question),
+      answer: cleanValue(turn.answer)
+    }))
+    .filter((turn) => turn.question || turn.answer);
+
+  if (!pairs.length) {
+    sendJson(res, 400, { error: "Add at least one question and answer." });
+    return;
+  }
+
+  if (pairs.some((turn) => !turn.question || !turn.answer)) {
+    sendJson(res, 400, { error: "Each test interview row needs both a question and an answer." });
+    return;
+  }
+
+  const now = new Date().toISOString();
+  const profileSnapshot = JSON.stringify({
+    userId: sessionUser.id,
+    name: sessionUser.name,
+    email: sessionUser.email,
+    domain,
+    source: "manual_test"
+  });
+  const metadata = {
+    source: "manual_test",
+    title,
+    created_from: "decisions_knowledge_test_interview",
+    transcript_pair_count: pairs.length
+  };
+  const result = await db.run(`
+    INSERT INTO interview_sessions (
+      user_id, domain, status, profile_snapshot_json, summary, metadata_json,
+      started_at, ended_at, created_at, updated_at
+    )
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `, [
+    sessionUser.id,
+    domain,
+    "transcribed",
+    profileSnapshot,
+    title,
+    JSON.stringify(metadata),
+    now,
+    now,
+    now,
+    now
+  ]);
+  const sessionId = Number(result.lastInsertRowid);
+  const transcriptEntries = [];
+
+  pairs.forEach((pair, index) => {
+    transcriptEntries.push({
+      role: "interviewer",
+      content: pair.question,
+      id: `manual-${sessionId}-q-${index + 1}`
+    });
+    transcriptEntries.push({
+      role: sessionUser.name || "user",
+      content: pair.answer,
+      id: `manual-${sessionId}-a-${index + 1}`
+    });
+  });
+
+  await storeTranscriptTurns(sessionId, transcriptEntries, {
+    event_type: "manual.test_interview",
+    source: "manual_test"
+  });
+  await storeStructuredOutput(sessionId, domain, transcriptEntries);
+  await extractDecisionKnowledgeForSession(sessionId, { syncTavus: false });
+
+  const transcriptCount = await db.get(`
+    SELECT COUNT(*) AS count
+    FROM conversation_transcripts
+    WHERE session_id = ?
+  `, [sessionId]);
+  const caseCount = await db.get(`
+    SELECT COUNT(*) AS count
+    FROM decision_cases
+    WHERE session_id = ?
+  `, [sessionId]);
+
+  sendJson(res, 201, {
+    ok: true,
+    interview: {
+      id: sessionId,
+      title,
+      domain,
+      status: "transcribed",
+      source: "manual_test",
+      transcriptTurns: Number(transcriptCount?.count || 0),
+      decisionCases: Number(caseCount?.count || 0),
+      createdAt: now
+    }
   });
 }
 

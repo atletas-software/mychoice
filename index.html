@@ -272,6 +272,24 @@
                 </label>
               </div>
               <p class="knowledge-status" id="knowledgeStatus">Select a domain to view its UDM, graph, and decision cases.</p>
+              <section class="knowledge-panel test-interview-panel" aria-labelledby="testInterviewTitle">
+                <div class="knowledge-panel-head">
+                  <span>Test Interview</span>
+                  <h3 id="testInterviewTitle">Manual Q/A input</h3>
+                </div>
+                <form id="testInterviewForm" class="test-interview-form">
+                  <label>
+                    <span>Title</span>
+                    <input id="testInterviewTitleInput" placeholder="Example: Maintenance prioritization test" />
+                  </label>
+                  <div id="testInterviewTurns" class="test-interview-turns"></div>
+                  <div class="test-interview-actions">
+                    <button class="ghost-button" id="addTestTurnButton" type="button">Add Q/A</button>
+                    <button class="primary-action compact-action" type="submit">Process Test Interview</button>
+                  </div>
+                  <p class="form-status" id="testInterviewStatus" role="status" aria-live="polite"></p>
+                </form>
+              </section>
               <div class="knowledge-summary-grid" id="knowledgeSummaryGrid"></div>
               <div class="knowledge-grid">
                 <section class="knowledge-panel">

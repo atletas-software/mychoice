@@ -709,6 +709,91 @@ code {
   color: #ffd1cc;
 }
 
+.test-interview-panel {
+  background:
+    linear-gradient(160deg, rgba(85, 158, 174, 0.12), transparent 46%),
+    #0b1a26;
+}
+
+.test-interview-form,
+.test-interview-turns {
+  display: grid;
+  gap: 14px;
+}
+
+.test-interview-form label,
+.test-turn-row label {
+  display: grid;
+  gap: 8px;
+}
+
+.test-interview-form label span,
+.test-turn-row label span {
+  color: #aebdce;
+  font-size: 0.78rem;
+  font-weight: 850;
+  text-transform: uppercase;
+}
+
+.test-interview-form input,
+.test-turn-row textarea {
+  width: 100%;
+  padding: 12px 14px;
+  color: #e8f0fb;
+  background: #07131f;
+  border: 1px solid #2b4054;
+  border-radius: 8px;
+  font: inherit;
+}
+
+.test-turn-row textarea {
+  min-height: 74px;
+  resize: vertical;
+  line-height: 1.45;
+}
+
+.test-turn-row {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+  background: #14283a;
+  border: 1px solid #2b4054;
+  border-radius: 8px;
+}
+
+.test-turn-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.test-turn-head strong {
+  color: #e8f0fb;
+}
+
+.test-turn-head button {
+  min-height: 32px;
+  padding: 0 10px;
+  color: #aebdce;
+  background: transparent;
+  border: 1px solid #2b4054;
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.test-interview-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.compact-action {
+  min-width: 220px;
+  min-height: 44px;
+}
+
 .knowledge-summary-grid {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));

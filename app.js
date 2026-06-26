@@ -48,6 +48,11 @@ const knowledgeSummaryGrid = document.querySelector("#knowledgeSummaryGrid");
 const knowledgeConcepts = document.querySelector("#knowledgeConcepts");
 const knowledgeRelationships = document.querySelector("#knowledgeRelationships");
 const knowledgeCases = document.querySelector("#knowledgeCases");
+const testInterviewForm = document.querySelector("#testInterviewForm");
+const testInterviewTitleInput = document.querySelector("#testInterviewTitleInput");
+const testInterviewTurns = document.querySelector("#testInterviewTurns");
+const addTestTurnButton = document.querySelector("#addTestTurnButton");
+const testInterviewStatus = document.querySelector("#testInterviewStatus");
 
 let activeConversationId = "";
 let dailyCall = null;
@@ -56,6 +61,7 @@ let selectedInterviewId = "";
 let recordingsRefreshTimer = null;
 
 initializeApp();
+addTestInterviewTurn();
 
 previewButton.addEventListener("click", () => {
   const user = {
@@ -113,6 +119,8 @@ recordingsList?.addEventListener("click", (event) => {
   }
 });
 knowledgeDomainInput?.addEventListener("change", () => loadDecisionKnowledge());
+addTestTurnButton?.addEventListener("click", () => addTestInterviewTurn());
+testInterviewForm?.addEventListener("submit", saveTestInterview);
 
 async function initializeApp() {
   showAuth();
@@ -1009,6 +1017,92 @@ async function loadDecisionKnowledge() {
       error instanceof Error ? error.message : "Unable to load decision knowledge.";
     knowledgeStatus.dataset.state = "error";
   }
+}
+
+function addTestInterviewTurn(values = {}) {
+  if (!testInterviewTurns) {
+    return;
+  }
+
+  const index = testInterviewTurns.children.length + 1;
+  const row = document.createElement("article");
+  row.className = "test-turn-row";
+  row.dataset.testTurn = "true";
+  row.innerHTML = `
+    <div class="test-turn-head">
+      <strong>Q/A ${index}</strong>
+      <button type="button" aria-label="Remove Q/A">Remove</button>
+    </div>
+    <label>
+      <span>Question</span>
+      <textarea data-test-question rows="2" placeholder="What question would Alma ask?">${escapeHtml(values.question || "")}</textarea>
+    </label>
+    <label>
+      <span>Answer</span>
+      <textarea data-test-answer rows="3" placeholder="What would the interviewee answer?">${escapeHtml(values.answer || "")}</textarea>
+    </label>
+  `;
+  row.querySelector("button")?.addEventListener("click", () => {
+    row.remove();
+
+    if (!testInterviewTurns.children.length) {
+      addTestInterviewTurn();
+    }
+  });
+  testInterviewTurns.append(row);
+}
+
+async function saveTestInterview(event) {
+  event.preventDefault();
+
+  if (!currentUser || !testInterviewForm || !testInterviewTurns || !knowledgeDomainInput) {
+    return;
+  }
+
+  setTestInterviewStatus("Processing test interview...", false);
+
+  const turns = [...testInterviewTurns.querySelectorAll("[data-test-turn]")].map((row) => ({
+    question: row.querySelector("[data-test-question]")?.value || "",
+    answer: row.querySelector("[data-test-answer]")?.value || ""
+  }));
+
+  try {
+    const response = await fetch("/api/test-interviews", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        title: testInterviewTitleInput?.value || "",
+        domain: knowledgeDomainInput.value,
+        turns
+      })
+    });
+    const data = await response.json().catch(() => ({}));
+
+    if (!response.ok) {
+      throw new Error(data.error || "Unable to process test interview.");
+    }
+
+    const created = data.interview || {};
+    setTestInterviewStatus(
+      `Saved test interview #${created.id}. Created ${created.decisionCases || 0} decision cases from ${created.transcriptTurns || 0} transcript turns.`,
+      false
+    );
+    await loadDecisionKnowledge();
+    await loadInterviewHistory({ silent: true });
+  } catch (error) {
+    setTestInterviewStatus(error instanceof Error ? error.message : "Unable to process test interview.", true);
+  }
+}
+
+function setTestInterviewStatus(message, isError) {
+  if (!testInterviewStatus) {
+    return;
+  }
+
+  testInterviewStatus.textContent = message;
+  testInterviewStatus.dataset.state = isError ? "error" : "info";
 }
 
 function renderDecisionKnowledge(data) {
