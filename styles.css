@@ -1209,6 +1209,16 @@ code {
   font-size: 1.2rem;
 }
 
+.ai-path-objective blockquote {
+  margin: 0;
+  padding: 12px 14px;
+  color: #e8f0fb;
+  background: rgba(7, 19, 31, 0.55);
+  border-left: 3px solid #6bd6bf;
+  border-radius: 8px;
+  line-height: 1.45;
+}
+
 .ai-path-objective p {
   max-width: 860px;
   margin: 0;

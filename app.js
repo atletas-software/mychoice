@@ -929,6 +929,15 @@ function handleAiPathAction(event) {
     state.steps[stepId] = action === "complete" ? "complete" : "skipped";
     saveAiPathState(state);
     renderAiPathSteps();
+
+    if (stepId === "vision" && action === "complete") {
+      setTimeout(() => {
+        aiPathSteps?.querySelector("[data-ai-step='tools']")?.scrollIntoView({
+          behavior: "smooth",
+          block: "start"
+        });
+      }, 80);
+    }
   }
 }
 
@@ -977,6 +986,7 @@ function renderDomainToolsForPath() {
     aiPathObjectiveSummary.innerHTML = `
       <span>Recommended focus</span>
       <strong>${escapeHtml(recommendation.title)}</strong>
+      ${objective.trim() ? `<blockquote>${escapeHtml(objective.trim())}</blockquote>` : ""}
       <p>${escapeHtml(recommendation.summary)}</p>
     `;
   }
@@ -1010,6 +1020,25 @@ function getAiPathRecommendation(domain, objective) {
     };
   }
 
+  if (
+    has(["automate", "automation", "workflow", "campaign", "nurture", "follow-up", "follow up"]) &&
+    has(["marketing", "client", "lead", "sales", "customer", "prospect", "revenue"])
+  ) {
+    return {
+      focus: "marketingAutomation",
+      title: "AI marketing automation",
+      summary: "Your objective is to automate marketing. Start with lead capture, audience research, message generation, campaign workflows, and CRM follow-up."
+    };
+  }
+
+  if (has(["automate", "automation", "workflow", "process", "manual", "operation", "efficiency", "save time"])) {
+    return {
+      focus: "automation",
+      title: "Workflow automation and operational leverage",
+      summary: "Your objective is about removing manual work. Start with automation tools, structured prompts, and lightweight agents for repeatable business workflows."
+    };
+  }
+
   if (has(["client", "lead", "sales", "revenue", "customer", "prospect", "marketing", "growth"])) {
     return {
       focus: "growth",
@@ -1023,14 +1052,6 @@ function getAiPathRecommendation(domain, objective) {
       focus: "analytics",
       title: "AI analytics and executive reporting",
       summary: "Your objective is about turning business data into clearer decisions. Start with tools for analysis, dashboard narratives, and decision-ready summaries."
-    };
-  }
-
-  if (has(["automate", "workflow", "process", "manual", "operation", "efficiency", "save time"])) {
-    return {
-      focus: "automation",
-      title: "Workflow automation and operational leverage",
-      summary: "Your objective is about removing manual work. Start with automation tools, structured prompts, and lightweight agents for repeatable business workflows."
     };
   }
 
@@ -1164,6 +1185,51 @@ function getDomainToolsForPath(domain, focus = "foundation") {
     }
   ];
 
+  const marketingAutomationTools = [
+    {
+      type: "Strategy",
+      name: "ChatGPT or Claude",
+      learn: "Turn the business objective into a clear marketing funnel: audience, pain points, offer, messages, channels, and next actions.",
+      practice: "Ask AI to create a campaign brief for one target customer segment in your domain.",
+      proof: "Show your boss the funnel map and explain how each step creates more qualified opportunities."
+    },
+    {
+      type: "Research",
+      name: "Perplexity or ChatGPT Deep Research",
+      learn: "Find target customer profiles, buying triggers, competitor language, and market objections.",
+      practice: "Research 20 potential customer types and rank them by urgency, budget, and fit.",
+      proof: "Bring a target account or target segment list with evidence-backed reasons."
+    },
+    {
+      type: "CRM",
+      name: "HubSpot AI",
+      learn: "Capture leads, score contacts, summarize activity, draft follow-ups, and manage pipeline stages.",
+      practice: "Build a simple CRM workflow for new lead, qualified lead, proposal sent, and follow-up due.",
+      proof: "Show a lead pipeline and explain how AI reduces missed follow-ups."
+    },
+    {
+      type: "Campaigns",
+      name: "Mailchimp, Brevo, or HubSpot Marketing Hub",
+      learn: "Create email sequences, segment audiences, personalize messages, and measure engagement.",
+      practice: "Create a three-email nurture sequence for one customer segment.",
+      proof: "Show the sequence, subject lines, audience segment, and success metrics."
+    },
+    {
+      type: "Automation",
+      name: "Zapier, Make, or n8n",
+      learn: "Connect forms, landing pages, CRM, email, spreadsheets, and notifications into one marketing workflow.",
+      practice: "Design an automation where a new lead creates a CRM record, drafts a reply, and alerts the owner.",
+      proof: "Show the workflow diagram and explain time saved plus revenue impact."
+    },
+    {
+      type: "Creative",
+      name: "Canva AI or Microsoft Designer",
+      learn: "Produce simple campaign assets, one-pagers, landing page visuals, and social posts.",
+      practice: "Create a one-page campaign asset that explains your AI-powered business improvement.",
+      proof: "Use the asset as a portfolio example of AI-enabled marketing execution."
+    }
+  ];
+
   const automationTools = [
     {
       type: "Automation",
@@ -1228,6 +1294,10 @@ function getDomainToolsForPath(domain, focus = "foundation") {
 
   if (focus === "growth") {
     return growthTools;
+  }
+
+  if (focus === "marketingAutomation") {
+    return marketingAutomationTools;
   }
 
   if (focus === "automation") {
