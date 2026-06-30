@@ -1310,6 +1310,33 @@ code {
   line-height: 1.4;
 }
 
+.software-link-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.software-link-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 40px;
+  padding: 9px 12px;
+  color: #07131f;
+  background: #6bd6bf;
+  border: 1px solid #6bd6bf;
+  border-radius: 8px;
+  font-weight: 850;
+  text-decoration: none;
+}
+
+.software-link-button:hover,
+.software-link-button:focus {
+  background: #8be7d3;
+  border-color: #8be7d3;
+}
+
 .tool-use-button {
   justify-self: start;
   margin-top: 4px;

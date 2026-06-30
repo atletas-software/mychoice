@@ -1018,6 +1018,13 @@ function renderDomainToolsForPath() {
     ...tools.map((tool, index) => {
       const card = document.createElement("article");
       card.className = "domain-tool-card";
+      const softwareLinks = getToolSoftwareLinks(tool.name)
+        .map((link) => `
+          <a class="software-link-button" href="${escapeHtml(link.url)}" target="_blank" rel="noopener noreferrer">
+            ${escapeHtml(link.label)}
+          </a>
+        `)
+        .join("");
       card.innerHTML = `
         <span>${escapeHtml(tool.type)}</span>
         <strong>${escapeHtml(tool.name)}</strong>
@@ -1025,11 +1032,46 @@ function renderDomainToolsForPath() {
         <p>${escapeHtml(tool.learn)}</p>
         <div><b>Practice</b><em>${escapeHtml(tool.practice)}</em></div>
         <div><b>Interview proof</b><em>${escapeHtml(tool.proof)}</em></div>
+        ${softwareLinks ? `<div class="software-link-row">${softwareLinks}</div>` : ""}
         <button class="primary-action compact-action tool-use-button" type="button" data-tool-index="${index}">Use it</button>
       `;
       return card;
     })
   );
+}
+
+function getToolSoftwareLinks(toolName) {
+  const name = String(toolName || "").toLowerCase();
+  const links = [];
+  const add = (label, url) => {
+    if (!links.some((link) => link.url === url)) {
+      links.push({ label, url });
+    }
+  };
+
+  if (name.includes("chatgpt") || name.includes("openai")) add("Open ChatGPT", "https://chatgpt.com/");
+  if (name.includes("claude")) add("Open Claude", "https://claude.ai/");
+  if (name.includes("gemini")) add("Open Gemini", "https://gemini.google.com/");
+  if (name.includes("perplexity")) add("Open Perplexity", "https://www.perplexity.ai/");
+  if (name.includes("hubspot")) add("Open HubSpot", "https://app.hubspot.com/");
+  if (name.includes("salesforce")) add("Open Salesforce", "https://login.salesforce.com/");
+  if (name.includes("mailchimp")) add("Open Mailchimp", "https://login.mailchimp.com/");
+  if (name.includes("brevo")) add("Open Brevo", "https://app.brevo.com/");
+  if (name.includes("zapier")) add("Open Zapier", "https://zapier.com/app/home");
+  if (name.includes("make")) add("Open Make", "https://www.make.com/en/login");
+  if (name.includes("n8n")) add("Open n8n", "https://app.n8n.cloud/login");
+  if (name.includes("canva")) add("Open Canva", "https://www.canva.com/");
+  if (name.includes("designer")) add("Open Designer", "https://designer.microsoft.com/");
+  if (name.includes("excel")) add("Open Excel", "https://www.office.com/launch/excel");
+  if (name.includes("sheets")) add("Open Sheets", "https://sheets.google.com/");
+  if (name.includes("power bi")) add("Open Power BI", "https://app.powerbi.com/");
+  if (name.includes("looker")) add("Open Looker Studio", "https://lookerstudio.google.com/");
+  if (name.includes("airtable")) add("Open Airtable", "https://airtable.com/");
+  if (name.includes("copilot")) add("Open Copilot", "https://copilot.microsoft.com/");
+  if (name.includes("custom gpt")) add("Create GPT", "https://chatgpt.com/gpts/editor");
+  if (name.includes("assistants")) add("OpenAI Platform", "https://platform.openai.com/");
+
+  return links;
 }
 
 function personalizeToolsForObjective(tools, objective, recommendation) {
