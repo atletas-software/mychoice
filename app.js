@@ -40,6 +40,15 @@ const aiPathOverview = document.querySelector("#aiPathOverview");
 const aiPathSkills = document.querySelector("#aiPathSkills");
 const aiPathActions = document.querySelector("#aiPathActions");
 const bootcampTools = document.querySelector("#bootcampTools");
+const toolStackGrid = document.querySelector("#toolStackGrid");
+const aiLabSelect = document.querySelector("#aiLabSelect");
+const aiLabScenarioInput = document.querySelector("#aiLabScenarioInput");
+const runAiLabButton = document.querySelector("#runAiLabButton");
+const aiLabOutput = document.querySelector("#aiLabOutput");
+const agentTypeSelect = document.querySelector("#agentTypeSelect");
+const agentProblemInput = document.querySelector("#agentProblemInput");
+const buildAgentButton = document.querySelector("#buildAgentButton");
+const agentBlueprintOutput = document.querySelector("#agentBlueprintOutput");
 const recordingsList = document.querySelector("#recordingsList");
 const recordingsStatus = document.querySelector("#recordingsStatus");
 const knowledgeDomainInput = document.querySelector("#knowledgeDomainInput");
@@ -121,6 +130,8 @@ recordingsList?.addEventListener("click", (event) => {
 knowledgeDomainInput?.addEventListener("change", () => loadDecisionKnowledge());
 addTestTurnButton?.addEventListener("click", () => addTestInterviewTurn());
 testInterviewForm?.addEventListener("submit", saveTestInterview);
+runAiLabButton?.addEventListener("click", runAiProLab);
+buildAgentButton?.addEventListener("click", buildAgentBlueprint);
 
 async function initializeApp() {
   showAuth();
@@ -911,6 +922,7 @@ function renderAiTrainingPath(path) {
     aiPathSkills.replaceChildren();
     aiPathActions.replaceChildren();
     renderBootcampTools([]);
+    renderAiProTraining(getAiProProgram(currentUser, null));
     return;
   }
 
@@ -940,6 +952,7 @@ function renderAiTrainingPath(path) {
   }
 
   renderBootcampTools(path.bootcampTools || []);
+  renderAiProTraining(getAiProProgram(currentUser, path));
 }
 
 function renderBootcampTools(tools) {
@@ -988,6 +1001,267 @@ function renderBootcampTools(tools) {
       return card;
     })
   );
+}
+
+function renderAiProTraining(program) {
+  renderToolStack(program.toolStack);
+  renderLabOptions(program.labs);
+  renderAgentOptions(program.agents);
+
+  if (aiLabOutput && !aiLabOutput.children.length) {
+    aiLabOutput.replaceChildren(createTrainingOutputEmpty("Choose a lab, describe a scenario, and generate a practice exercise."));
+  }
+
+  if (agentBlueprintOutput && !agentBlueprintOutput.children.length) {
+    agentBlueprintOutput.replaceChildren(createTrainingOutputEmpty("Choose an agent type and describe a business problem to generate a blueprint."));
+  }
+}
+
+function renderToolStack(tools) {
+  if (!toolStackGrid) {
+    return;
+  }
+
+  toolStackGrid.replaceChildren(
+    ...tools.map((tool) => {
+      const card = document.createElement("article");
+      card.className = "tool-stack-card";
+      card.innerHTML = `
+        <span>${escapeHtml(tool.category)}</span>
+        <strong>${escapeHtml(tool.name)}</strong>
+        <p>${escapeHtml(tool.useFor)}</p>
+        <div class="tool-meta-row"><b>Best for</b><em>${escapeHtml(tool.bestFor)}</em></div>
+        <div class="tool-meta-row"><b>Practice</b><em>${escapeHtml(tool.practice)}</em></div>
+        <div class="tool-meta-row"><b>Interview proof</b><em>${escapeHtml(tool.interviewProof)}</em></div>
+      `;
+      return card;
+    })
+  );
+}
+
+function renderLabOptions(labs) {
+  if (!aiLabSelect) {
+    return;
+  }
+
+  aiLabSelect.replaceChildren(
+    ...labs.map((lab) => {
+      const option = document.createElement("option");
+      option.value = lab.id;
+      option.textContent = lab.title;
+      return option;
+    })
+  );
+}
+
+function renderAgentOptions(agents) {
+  if (!agentTypeSelect) {
+    return;
+  }
+
+  agentTypeSelect.replaceChildren(
+    ...agents.map((agent) => {
+      const option = document.createElement("option");
+      option.value = agent.id;
+      option.textContent = agent.name;
+      return option;
+    })
+  );
+}
+
+function runAiProLab() {
+  const program = getAiProProgram(currentUser, null);
+  const lab = program.labs.find((item) => item.id === aiLabSelect?.value) || program.labs[0];
+  const scenario = cleanInput(aiLabScenarioInput?.value) || lab.defaultScenario;
+  const domain = normalizeClientDomain(currentUser?.domain);
+  const profileAnchor = buildClientProfileAnchor(currentUser);
+
+  aiLabOutput?.replaceChildren(createTrainingOutputCard({
+    title: `${lab.title}: Training Exercise`,
+    sections: [
+      { heading: "Skill you are building", body: lab.skill },
+      { heading: "Your domain scenario", body: scenario },
+      {
+        heading: "Prompt to practice",
+        body: [
+          `Act as an AI-enabled ${domain} professional.`,
+          `My background/context: ${profileAnchor}.`,
+          `Task: ${lab.task}`,
+          `Scenario: ${scenario}`,
+          `Constraints: ${lab.constraints.join("; ")}.`,
+          `Return: ${lab.outputFormat}.`,
+          "Before finalizing, identify missing information, risks, and how a human should validate the result."
+        ].join("\n")
+      },
+      { heading: "How to judge the AI output", list: lab.evaluation },
+      { heading: "Business value story", body: lab.businessValue },
+      { heading: "Portfolio artifact", body: lab.artifact }
+    ]
+  }));
+}
+
+function buildAgentBlueprint() {
+  const program = getAiProProgram(currentUser, null);
+  const agent = program.agents.find((item) => item.id === agentTypeSelect?.value) || program.agents[0];
+  const problem = cleanInput(agentProblemInput?.value) || agent.defaultProblem;
+  const domain = normalizeClientDomain(currentUser?.domain);
+  const profileAnchor = buildClientProfileAnchor(currentUser);
+
+  agentBlueprintOutput?.replaceChildren(createTrainingOutputCard({
+    title: `${agent.name} Blueprint`,
+    sections: [
+      { heading: "Business problem", body: problem },
+      { heading: "Agent goal", body: agent.goal },
+      {
+        heading: "Instructions",
+        body: [
+          `You are a ${agent.name} for ${domain}.`,
+          `Use this professional context when tailoring recommendations: ${profileAnchor}.`,
+          `Primary objective: ${agent.goal}`,
+          `When given an input, produce ${agent.output}.`,
+          "Ask for missing information when risk, cost, compliance, or customer impact is unclear.",
+          "Keep a human-in-the-loop for final decisions."
+        ].join("\n")
+      },
+      { heading: "Knowledge this agent needs", list: agent.knowledge },
+      { heading: "Inputs", list: agent.inputs },
+      { heading: "Workflow", list: agent.workflow },
+      { heading: "Tools/software to connect", list: agent.tools },
+      { heading: "Guardrails", list: agent.guardrails },
+      { heading: "Success metrics", list: agent.metrics },
+      {
+        heading: "Interview story",
+        body: `I designed a ${agent.name} that improves ${problem}. It uses domain knowledge, structured prompts, and human review to create faster, more consistent decisions while reducing operational risk.`
+      }
+    ]
+  }));
+}
+
+function createTrainingOutputCard({ title, sections }) {
+  const card = document.createElement("article");
+  card.className = "training-output-card";
+  card.innerHTML = `<h4>${escapeHtml(title)}</h4>`;
+
+  sections.forEach((section) => {
+    const block = document.createElement("section");
+    block.innerHTML = `<strong>${escapeHtml(section.heading)}</strong>`;
+
+    if (section.list) {
+      const list = document.createElement("ul");
+      list.replaceChildren(...section.list.map((item) => {
+        const li = document.createElement("li");
+        li.textContent = item;
+        return li;
+      }));
+      block.append(list);
+    } else {
+      const node = section.body?.includes("\n") ? document.createElement("pre") : document.createElement("p");
+      node.textContent = section.body || "";
+      block.append(node);
+    }
+
+    card.append(block);
+  });
+
+  return card;
+}
+
+function createTrainingOutputEmpty(message) {
+  const item = document.createElement("p");
+  item.className = "training-output-empty";
+  item.textContent = message;
+  return item;
+}
+
+function getAiProProgram(user, path) {
+  const domain = normalizeClientDomain(user?.domain);
+  const roleTarget = path?.roleTarget || (domain === "Financial Management"
+    ? "AI-Enabled Financial Management Professional"
+    : "AI-Enabled Property Management Professional");
+
+  return domain === "Financial Management"
+    ? getFinancialAiProProgram(roleTarget)
+    : getPropertyAiProProgram(roleTarget);
+}
+
+function getPropertyAiProProgram(roleTarget) {
+  return {
+    toolStack: [
+      createTool("Reasoning + Agents", "ChatGPT / OpenAI", "Build property operations prompts, analyze messy requests, create structured outputs, and prototype agents.", "Maintenance triage, tenant response, owner summaries, workflow design.", "Classify a maintenance request by urgency, vendor, owner approval, risk, and next action.", `Show a before/after workflow for ${roleTarget}.`),
+      createTool("Document Reasoning", "Claude", "Review leases, SOPs, policies, vendor scopes, owner packets, and long documents.", "Lease issue summaries, policy comparison, SOP rewrite, owner packet review.", "Summarize a vendor scope and identify missing cost/risk details.", "Explain how long-document AI review reduces missed details."),
+      createTool("Workspace AI", "Microsoft Copilot / Google Gemini", "Draft emails, summarize meetings, analyze Sheets/Excel data, and create presentations.", "Owner updates, vacancy reports, renewal summaries, KPI narratives.", "Turn operational notes into an owner-ready update with decision needed.", "Show how AI improves communication speed and consistency."),
+      createTool("Automation", "Zapier / Make / n8n", "Connect intake forms, email, spreadsheets, task tools, and notifications into workflows.", "Tenant request intake, vendor routing, escalation alerts, weekly owner reporting.", "Map a trigger-action workflow for new maintenance requests.", "Describe a human-reviewed automation that saves coordinator time."),
+      createTool("Operations Database", "Airtable / Notion / Google Sheets", "Track requests, vendors, properties, approval status, and AI-generated summaries.", "Lightweight property ops dashboards and portfolio demos.", "Design a maintenance triage table with status, urgency, vendor, risk, and recommendation.", "Show a simple AI-enabled operating system prototype.")
+    ],
+    labs: [
+      createLab("maintenance_triage", "Maintenance Triage With AI", "Classify requests and recommend next action.", "Classify the issue by urgency, likely trade/vendor, resident impact, owner approval need, compliance/safety risk, and next action.", ["Do not overstate certainty", "Escalate safety/compliance risk", "Separate tenant message from internal recommendation"], "A table with urgency, vendor, risk, approval need, next action, tenant message, and manager note", ["Urgency is justified", "Risk is explicit", "Vendor/trade is plausible", "Human approval is clear", "Tenant tone is professional"], "Reduces misrouting, speeds response, and creates consistent maintenance decisions.", "Maintenance triage prompt + sample output", "A tenant reports water leaking under the kitchen sink on a Friday afternoon."),
+      createLab("tenant_communication", "Tenant Communication Coach", "Use AI to draft clear, empathetic, policy-safe tenant messages.", "Draft a tenant-facing response and an internal note for the property manager.", ["Keep tone calm and professional", "Avoid legal promises", "Include next steps and timing"], "Tenant message, internal note, follow-up checklist", ["Tone matches situation", "Next steps are concrete", "No unsafe promises", "Escalation is clear"], "Improves tenant experience and reduces inconsistent communication.", "Tenant message prompt library", "A resident is upset that a repair has been delayed twice."),
+      createLab("owner_reporting", "Owner Reporting With AI", "Turn operations facts into owner-ready decisions.", "Summarize the issue, business impact, options, recommendation, and decision needed.", ["Be concise", "Separate facts from recommendations", "Include cost/risk if known"], "Owner update with issue, impact, options, recommendation, and approval request", ["Decision needed is clear", "Tradeoffs are visible", "Owner economics are addressed"], "Turns operational noise into decision-ready owner communication.", "Owner update template", "A roof repair bid came in higher than expected and needs owner approval."),
+      createLab("vendor_bid", "Vendor Bid Comparison", "Use AI to compare vendor proposals and expose tradeoffs.", "Compare vendors by scope, cost, timing, risk, missing information, and recommendation.", ["Do not choose purely on price", "Flag missing scope details", "Recommend human verification"], "Vendor comparison table and recommendation", ["Scope differences are visible", "Risk is explained", "Recommendation is defensible"], "Improves vendor decisions and reduces avoidable cost/risk.", "Vendor comparison worksheet", "Three vendors submitted different bids for the same HVAC replacement.")
+    ],
+    agents: [
+      createAgent("maintenance_agent", "Maintenance Triage Agent", "Classify maintenance requests and route them to the right next action.", "urgency, vendor/trade, resident impact, owner approval, risk, tenant message, manager note", ["Maintenance categories", "Vendor list", "Approval thresholds", "Property rules", "Emergency policy"], ["Tenant request", "Property/unit", "Issue description", "Photos if available", "Time sensitivity"], ["Intake request", "Classify urgency", "Identify vendor/trade", "Check approval/risk", "Draft tenant response", "Create manager task"], ["ChatGPT/OpenAI", "Airtable or Sheets", "Zapier/Make", "Email/SMS tool"], ["Escalate safety issues", "Require human approval for cost/legal issues", "Do not diagnose beyond evidence"], ["Response time", "Correct routing rate", "Escalation accuracy", "Tenant satisfaction"], "A property team receives many maintenance requests and needs consistent triage."),
+      createAgent("owner_report_agent", "Owner Reporting Agent", "Convert property operations data into owner-ready updates and decisions.", "summary, key changes, risks, recommendation, decision needed", ["Owner reporting format", "Portfolio KPIs", "Budget/approval thresholds", "Recent maintenance/leasing events"], ["Operational notes", "KPIs", "Open issues", "Costs", "Recommendation needed"], ["Collect facts", "Summarize impact", "Identify options", "Recommend action", "Draft owner update"], ["Claude or ChatGPT", "Sheets/Excel", "Docs/Word", "Email"], ["Separate facts from recommendations", "Flag missing financials", "Human review before sending"], ["Report prep time", "Approval speed", "Owner clarity", "Fewer follow-up questions"], "Owners need concise updates and clear decisions, not raw operational noise."),
+      createAgent("leasing_agent", "Vacancy Marketing Agent", "Create compliant, compelling listing and lead-response content.", "listing copy, channel variants, lead response, follow-up sequence", ["Property details", "Fair housing guardrails", "Amenities", "Pricing", "Local market notes"], ["Unit details", "Target renter", "Amenities", "Availability", "Policies"], ["Generate listing", "Create channel variants", "Draft lead response", "Suggest follow-up", "Flag compliance risk"], ["ChatGPT", "Canva", "CRM/email", "Listings platform"], ["Avoid discriminatory language", "Verify property facts", "Human review for compliance"], ["Lead response time", "Listing quality", "Conversion rate", "Vacancy days"], "A vacant unit needs faster, higher-quality marketing and lead follow-up.")
+    ]
+  };
+}
+
+function getFinancialAiProProgram(roleTarget) {
+  return {
+    toolStack: [
+      createTool("Reasoning + Structured Outputs", "ChatGPT / OpenAI", "Analyze finance narratives, generate structured variance explanations, and prototype reporting agents.", "Variance review, executive summaries, forecast assumptions, risk flags.", "Explain actual vs budget and recommend follow-up actions.", `Show how ${roleTarget} uses AI to turn numbers into decisions.`),
+      createTool("Long Document Analysis", "Claude", "Review policy docs, board materials, management commentary, controls, and long reports.", "Narrative quality, risk identification, management summary review.", "Critique a monthly report for missing drivers and weak assumptions.", "Explain how AI improves review quality without replacing judgment."),
+      createTool("Spreadsheet + Workspace AI", "Excel Copilot / Gemini for Sheets", "Analyze spreadsheets, summarize trends, create charts, and draft finance narratives.", "KPI summaries, variance notes, forecast pack drafts.", "Turn KPI movements into an executive-ready narrative.", "Show how AI reduces manual reporting cycles."),
+      createTool("Automation", "Power Automate / Zapier / Make", "Move reporting inputs, reminders, approvals, and recurring summaries across systems.", "Monthly close reminders, report routing, approval workflows.", "Design a workflow that collects variance comments and creates a draft summary.", "Describe controls-aware automation with human review."),
+      createTool("BI + Dashboards", "Power BI / Looker Studio", "Create AI-supported KPI monitoring and decision dashboards.", "Variance dashboards, cash/risk monitors, performance summaries.", "Define metrics and alert thresholds for a finance dashboard.", "Show business impact through decision-ready visibility.")
+    ],
+    labs: [
+      createLab("variance_analysis", "Variance Analysis With AI", "Explain budget vs actual movement and recommend next steps.", "Analyze the variance, identify likely drivers, business risk, questions to ask, and next action.", ["Do not invent causes", "Separate known facts from hypotheses", "Recommend validation steps"], "Variance explanation, driver hypotheses, risk level, questions, and action plan", ["Drivers are plausible", "Unknowns are labeled", "Action is clear", "Risk is quantified where possible"], "Improves reporting speed and decision quality.", "Variance analysis prompt + sample narrative", "Revenue is 8 percent below forecast while operating expenses are 5 percent above budget."),
+      createLab("forecast_review", "Forecast Assumption Review", "Use AI to pressure-test assumptions.", "Review assumptions for optimism, missing risks, sensitivity, and validation needs.", ["Flag weak assumptions", "Suggest sensitivity checks", "Do not claim certainty"], "Assumption review table with risk, evidence needed, and recommended adjustment", ["Risks are specific", "Validation is actionable", "Sensitivity is included"], "Helps leaders make better planning decisions.", "Forecast review checklist", "Next quarter forecast assumes faster collections and flat labor cost."),
+      createLab("executive_summary", "Executive Summary Builder", "Turn financial facts into leadership-ready narrative.", "Write an executive summary with what changed, why it matters, risks, and decisions needed.", ["Be concise", "Lead with business impact", "Separate facts and recommendations"], "Executive summary, risks, decisions needed, and follow-up questions", ["Narrative is decision-ready", "Risks are explicit", "Next steps are clear"], "Makes finance a stronger decision partner.", "Executive summary template", "Monthly results show mixed KPI performance and uncertain cash timing."),
+      createLab("kpi_story", "KPI Narrative Coach", "Explain KPI movement in business language.", "Interpret KPI changes and write a clear business story for leaders.", ["Avoid jargon", "Connect metrics to operations", "Identify what to monitor next"], "KPI narrative with interpretation, causes to validate, and next action", ["Story is clear", "Operational drivers are included", "Monitoring plan is practical"], "Improves communication between finance and operations.", "KPI narrative prompt library", "Occupancy, revenue, margin, and collections all moved in different directions.")
+    ],
+    agents: [
+      createAgent("variance_agent", "Variance Analysis Agent", "Explain budget vs actual movement and route follow-up questions.", "variance summary, likely drivers, risk, validation questions, recommended action", ["Chart of accounts", "Budget/forecast data", "Variance thresholds", "Business unit context"], ["Actuals", "Budget", "Forecast", "Comments", "Thresholds"], ["Load variance", "Classify materiality", "Draft explanation", "List validation questions", "Recommend action"], ["OpenAI/ChatGPT", "Excel/Sheets", "Power BI", "Power Automate"], ["Do not invent drivers", "Flag missing data", "Human approval before leadership report"], ["Report cycle time", "Comment quality", "Escalation accuracy", "Forecast adjustment quality"], "Finance teams need faster, better explanations for material variances."),
+      createAgent("executive_summary_agent", "Executive Summary Agent", "Turn finance inputs into concise leadership-ready summaries.", "what changed, why it matters, risk, recommendation, decision needed", ["Reporting calendar", "Executive format", "KPI definitions", "Risk thresholds"], ["Monthly results", "KPI movement", "Variance notes", "Business context"], ["Collect inputs", "Find key changes", "Draft narrative", "Identify decisions", "Create follow-up questions"], ["Claude or ChatGPT", "Excel/Sheets", "Docs/Word", "PowerPoint"], ["Separate facts from interpretation", "Do not hide uncertainty", "Human review required"], ["Summary prep time", "Leadership clarity", "Fewer revision cycles"], "Leaders need the story behind the numbers, not spreadsheet dumps."),
+      createAgent("forecast_agent", "Forecast Assumption Agent", "Review forecast assumptions and identify risk areas.", "assumption table, risk score, sensitivity suggestion, validation plan", ["Forecast model", "Assumption history", "Business drivers", "Risk policy"], ["Forecast assumptions", "Actual trends", "Known risks", "Business constraints"], ["Review assumptions", "Compare to trends", "Flag risk", "Suggest sensitivity", "Draft questions"], ["ChatGPT/OpenAI", "Excel", "Power BI", "Power Automate"], ["Do not change official forecast automatically", "Escalate high-risk assumptions", "Keep audit trail"], ["Forecast accuracy", "Risk detection", "Review time", "Assumption quality"], "Forecasts often fail because assumptions are not challenged early enough.")
+    ]
+  };
+}
+
+function createTool(category, name, useFor, bestFor, practice, interviewProof) {
+  return { category, name, useFor, bestFor, practice, interviewProof };
+}
+
+function createLab(id, title, skill, task, constraints, outputFormat, evaluation, businessValue, artifact, defaultScenario) {
+  return { id, title, skill, task, constraints, outputFormat, evaluation, businessValue, artifact, defaultScenario };
+}
+
+function createAgent(id, name, goal, output, knowledge, inputs, workflow, tools, guardrails, metrics, defaultProblem) {
+  return { id, name, goal, output, knowledge, inputs, workflow, tools, guardrails, metrics, defaultProblem };
+}
+
+function normalizeClientDomain(domain) {
+  return domain === "Financial" ? "Financial Management" : domain || "Property Management";
+}
+
+function buildClientProfileAnchor(user) {
+  if (!user) {
+    return "profile not completed yet";
+  }
+
+  return [
+    user.name || "the learner",
+    normalizeClientDomain(user.domain),
+    user.resumeFileName ? `resume: ${user.resumeFileName}` : "resume not uploaded",
+    user.linkedIn ? "LinkedIn profile available" : "LinkedIn not added",
+    user.futureDirection ? `future direction: ${user.futureDirection}` : ""
+  ].filter(Boolean).join("; ");
+}
+
+function cleanInput(value) {
+  return String(value || "").trim();
 }
 
 async function loadDecisionKnowledge() {

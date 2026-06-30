@@ -1092,6 +1092,13 @@ code {
   gap: 24px;
 }
 
+.training-promise {
+  margin: -8px 0 20px;
+  color: #d8e4ef;
+  font-size: 1.05rem;
+  font-weight: 780;
+}
+
 .training-hero-card,
 .training-path-card,
 .training-modules article {
@@ -1183,6 +1190,16 @@ code {
   gap: 18px;
 }
 
+.ai-pro-section {
+  grid-column: 1 / -1;
+  display: grid;
+  gap: 18px;
+  padding: 24px;
+  background: #0b1a26;
+  border: 1px solid #294158;
+  border-radius: 8px;
+}
+
 .bootcamp-head {
   display: grid;
   gap: 6px;
@@ -1204,6 +1221,133 @@ code {
   display: grid;
   grid-template-columns: repeat(2, minmax(280px, 1fr));
   gap: 18px;
+}
+
+.tool-stack-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(245px, 1fr));
+  gap: 14px;
+}
+
+.tool-stack-card,
+.training-output-card {
+  display: grid;
+  gap: 12px;
+  padding: 18px;
+  background: #14283a;
+  border: 1px solid #294158;
+  border-radius: 8px;
+}
+
+.tool-stack-card span {
+  color: #9fb0c1;
+  font-size: 0.78rem;
+  font-weight: 850;
+  text-transform: uppercase;
+}
+
+.tool-stack-card strong {
+  color: #e8f0fb;
+  font-size: 1.15rem;
+}
+
+.tool-stack-card p,
+.tool-meta-row em,
+.training-output-card p,
+.training-output-card li,
+.training-output-empty {
+  margin: 0;
+  color: #aebdce;
+  line-height: 1.45;
+}
+
+.tool-meta-row {
+  display: grid;
+  gap: 4px;
+  padding-top: 10px;
+  border-top: 1px solid #263b4f;
+}
+
+.tool-meta-row b,
+.ai-lab-workbench label span,
+.agent-builder-grid label span,
+.training-output-card strong {
+  color: #d8e4ef;
+  font-size: 0.78rem;
+  font-style: normal;
+  font-weight: 850;
+  text-transform: uppercase;
+}
+
+.ai-lab-workbench,
+.agent-builder-grid {
+  display: grid;
+  grid-template-columns: minmax(220px, 0.45fr) minmax(320px, 1fr) auto;
+  gap: 14px;
+  align-items: end;
+}
+
+.ai-lab-workbench label,
+.agent-builder-grid label {
+  display: grid;
+  gap: 8px;
+}
+
+.ai-lab-workbench select,
+.agent-builder-grid select,
+.ai-lab-workbench textarea,
+.agent-builder-grid textarea {
+  width: 100%;
+  min-height: 44px;
+  padding: 11px 12px;
+  color: #e8f0fb;
+  background: #07131f;
+  border: 1px solid #2b4054;
+  border-radius: 8px;
+  font: inherit;
+}
+
+.ai-lab-workbench textarea,
+.agent-builder-grid textarea {
+  min-height: 92px;
+  resize: vertical;
+}
+
+.ai-lab-output,
+.agent-blueprint-output {
+  display: grid;
+  gap: 14px;
+}
+
+.training-output-card h4 {
+  margin: 0;
+  color: #e8f0fb;
+  font-size: 1.35rem;
+}
+
+.training-output-card section {
+  display: grid;
+  gap: 8px;
+}
+
+.training-output-card pre {
+  overflow: auto;
+  margin: 0;
+  padding: 14px;
+  color: #d8e4ef;
+  white-space: pre-wrap;
+  background: #07131f;
+  border: 1px solid #2b4054;
+  border-radius: 8px;
+  font: inherit;
+  font-size: 0.92rem;
+}
+
+.training-output-card ul {
+  display: grid;
+  gap: 7px;
+  margin: 0;
+  padding-left: 20px;
 }
 
 .bootcamp-tool-card {
@@ -1776,7 +1920,9 @@ code {
   .form-grid,
   .agents-grid,
   .training-offer,
-  .training-modules {
+  .training-modules,
+  .ai-lab-workbench,
+  .agent-builder-grid {
     grid-template-columns: 1fr;
   }
 

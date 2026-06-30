@@ -186,6 +186,7 @@
                 <span>AI Training</span>
                 <h2>My AI Path</h2>
               </div>
+              <p class="training-promise">My Choice AI Training helps you become an AI-enabled professional in your domain.</p>
               <div class="training-offer">
                 <article class="training-hero-card">
                   <span>Personalized program</span>
@@ -224,6 +225,49 @@
                     <p>Use interview transcripts to sharpen answers, build proof-of-skill assets, and prepare for new roles.</p>
                   </article>
                 </div>
+                <section class="ai-pro-section" aria-labelledby="toolStackTitle">
+                  <div class="bootcamp-head">
+                    <span>Tool Stack</span>
+                    <h3 id="toolStackTitle">Best AI tools for your domain</h3>
+                  </div>
+                  <div class="tool-stack-grid" id="toolStackGrid"></div>
+                </section>
+                <section class="ai-pro-section" aria-labelledby="aiProLabsTitle">
+                  <div class="bootcamp-head">
+                    <span>AI Pro Labs</span>
+                    <h3 id="aiProLabsTitle">Practice using AI like a domain expert</h3>
+                  </div>
+                  <div class="ai-lab-workbench">
+                    <label>
+                      <span>Practice lab</span>
+                      <select id="aiLabSelect"></select>
+                    </label>
+                    <label>
+                      <span>Your scenario</span>
+                      <textarea id="aiLabScenarioInput" rows="4" placeholder="Describe a real task, issue, report, decision, tenant/vendor/client situation, or analysis you want to practice with AI."></textarea>
+                    </label>
+                    <button class="primary-action compact-action" id="runAiLabButton" type="button">Generate Training Exercise</button>
+                  </div>
+                  <div class="ai-lab-output" id="aiLabOutput"></div>
+                </section>
+                <section class="ai-pro-section" aria-labelledby="agentBuilderTitle">
+                  <div class="bootcamp-head">
+                    <span>Agent Builder</span>
+                    <h3 id="agentBuilderTitle">Design an AI agent for your domain</h3>
+                  </div>
+                  <div class="agent-builder-grid">
+                    <label>
+                      <span>Agent type</span>
+                      <select id="agentTypeSelect"></select>
+                    </label>
+                    <label>
+                      <span>Business problem</span>
+                      <textarea id="agentProblemInput" rows="4" placeholder="What business workflow, decision, or task should this agent improve?"></textarea>
+                    </label>
+                    <button class="primary-action compact-action" id="buildAgentButton" type="button">Build Agent Blueprint</button>
+                  </div>
+                  <div class="agent-blueprint-output" id="agentBlueprintOutput"></div>
+                </section>
                 <section class="bootcamp-section" aria-labelledby="bootcampTitle">
                   <div class="bootcamp-head">
                     <span>AI Tools Bootcamp</span>
