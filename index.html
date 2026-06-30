@@ -187,94 +187,41 @@
                 <h2>My AI Path</h2>
               </div>
               <p class="training-promise">My Choice AI Training helps you become an AI-enabled professional in your domain.</p>
-              <div class="training-offer">
-                <article class="training-hero-card">
-                  <span>Personalized program</span>
-                  <h3 id="trainingOfferTitle">Career recovery plan</h3>
-                  <p id="trainingOfferSummary">
-                    Uses your LinkedIn, resume, future direction, domain, and interviews to reposition you for AI-ready opportunities.
+              <div class="ai-path-simple" id="aiPathSteps">
+                <div class="ai-path-progress" id="aiPathProgress">Step 1 of 2</div>
+
+                <article class="ai-path-step-card" data-ai-step="vision">
+                  <div class="ai-path-step-head">
+                    <span>Step 1</span>
+                    <strong>How you will help your organization with AI</strong>
+                    <em data-step-status="vision">Not started</em>
+                  </div>
+                  <label class="ai-path-prompt" for="aiPathVisionInput">
+                    <span>Prompt</span>
+                    <textarea id="aiPathVisionInput" rows="5" placeholder="Write how you envision helping your organization with AI."></textarea>
+                  </label>
+                  <div class="ai-path-actions">
+                    <button class="primary-action compact-action" type="button" data-ai-step-action="complete" data-step-id="vision">Complete Step</button>
+                    <button class="ghost-button compact-action" type="button" data-ai-step-action="skip" data-step-id="vision">Skip</button>
+                  </div>
+                  <p class="form-status" id="aiPathVisionStatus"></p>
+                </article>
+
+                <article class="ai-path-step-card" data-ai-step="tools">
+                  <div class="ai-path-step-head">
+                    <span>Step 2</span>
+                    <strong>Domain specific tools and models you need to know</strong>
+                    <em data-step-status="tools">Not started</em>
+                  </div>
+                  <p class="ai-path-note">
+                    Learn only the tools that help you prove AI value in your selected domain. Complete this step when you know what each tool is for and can explain one business use case.
                   </p>
-                  <button class="primary-action training-cta" type="button">Start paid training</button>
+                  <div class="domain-tools-grid" id="domainToolsList"></div>
+                  <div class="ai-path-actions">
+                    <button class="primary-action compact-action" type="button" data-ai-step-action="complete" data-step-id="tools">Complete Step</button>
+                    <button class="ghost-button compact-action" type="button" data-ai-step-action="skip" data-step-id="tools">Skip</button>
+                  </div>
                 </article>
-                <article class="training-path-card" aria-label="Generated AI career path">
-                  <span>Generated plan</span>
-                  <h3 id="aiPathRoleTitle">Complete your profile to generate your path</h3>
-                  <p id="aiPathOverview">Your path will use LinkedIn, resume, future direction, profile context, and recorded interviews.</p>
-                  <div class="path-pill-row" id="aiPathSkills"></div>
-                  <ul class="path-list" id="aiPathActions"></ul>
-                </article>
-                <div class="training-modules" aria-label="AI Training modules">
-                  <article>
-                    <span>Module 1</span>
-                    <strong>My AI Career Path</strong>
-                    <p id="careerPathCopy">Map your current experience into practical AI-ready roles and skill gaps.</p>
-                  </article>
-                  <article>
-                    <span>Module 2</span>
-                    <strong>AI Tools Bootcamp</strong>
-                    <p>Hands-on training for prompts, research, documents, spreadsheets, presentations, and workflow automation.</p>
-                  </article>
-                  <article>
-                    <span>Module 3</span>
-                    <strong>Domain Practice Lab</strong>
-                    <p id="domainPracticeCopy">Complete exercises and portfolio projects matched to your selected domain.</p>
-                  </article>
-                  <article>
-                    <span>Module 4</span>
-                    <strong>Interview + Portfolio Readiness</strong>
-                    <p>Use interview transcripts to sharpen answers, build proof-of-skill assets, and prepare for new roles.</p>
-                  </article>
-                </div>
-                <section class="ai-pro-section" aria-labelledby="toolStackTitle">
-                  <div class="bootcamp-head">
-                    <span>Tool Stack</span>
-                    <h3 id="toolStackTitle">Best AI tools for your domain</h3>
-                  </div>
-                  <div class="tool-stack-grid" id="toolStackGrid"></div>
-                </section>
-                <section class="ai-pro-section" aria-labelledby="aiProLabsTitle">
-                  <div class="bootcamp-head">
-                    <span>AI Pro Labs</span>
-                    <h3 id="aiProLabsTitle">Practice using AI like a domain expert</h3>
-                  </div>
-                  <div class="ai-lab-workbench">
-                    <label>
-                      <span>Practice lab</span>
-                      <select id="aiLabSelect"></select>
-                    </label>
-                    <label>
-                      <span>Your scenario</span>
-                      <textarea id="aiLabScenarioInput" rows="4" placeholder="Describe a real task, issue, report, decision, tenant/vendor/client situation, or analysis you want to practice with AI."></textarea>
-                    </label>
-                    <button class="primary-action compact-action" id="runAiLabButton" type="button">Generate Training Exercise</button>
-                  </div>
-                  <div class="ai-lab-output" id="aiLabOutput"></div>
-                </section>
-                <section class="ai-pro-section" aria-labelledby="agentBuilderTitle">
-                  <div class="bootcamp-head">
-                    <span>Agent Builder</span>
-                    <h3 id="agentBuilderTitle">Design an AI agent for your domain</h3>
-                  </div>
-                  <div class="agent-builder-grid">
-                    <label>
-                      <span>Agent type</span>
-                      <select id="agentTypeSelect"></select>
-                    </label>
-                    <label>
-                      <span>Business problem</span>
-                      <textarea id="agentProblemInput" rows="4" placeholder="What business workflow, decision, or task should this agent improve?"></textarea>
-                    </label>
-                    <button class="primary-action compact-action" id="buildAgentButton" type="button">Build Agent Blueprint</button>
-                  </div>
-                  <div class="agent-blueprint-output" id="agentBlueprintOutput"></div>
-                </section>
-                <section class="bootcamp-section" aria-labelledby="bootcampTitle">
-                  <div class="bootcamp-head">
-                    <span>AI Tools Bootcamp</span>
-                    <h3 id="bootcampTitle">Personalized tools to practice</h3>
-                  </div>
-                  <div class="bootcamp-tools" id="bootcampTools"></div>
-                </section>
               </div>
             </div>
           </section>

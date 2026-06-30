@@ -1099,6 +1099,139 @@ code {
   font-weight: 780;
 }
 
+.ai-path-simple {
+  display: grid;
+  gap: 18px;
+  max-width: 1120px;
+}
+
+.ai-path-progress {
+  justify-self: start;
+  padding: 8px 12px;
+  color: #e8f0fb;
+  background: rgba(85, 158, 174, 0.18);
+  border: 1px solid rgba(105, 183, 199, 0.42);
+  border-radius: 8px;
+  font-weight: 850;
+}
+
+.ai-path-step-card {
+  display: grid;
+  gap: 18px;
+  padding: 24px;
+  background: #14283a;
+  border: 1px solid #294158;
+  border-radius: 8px;
+}
+
+.ai-path-step-head {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 14px;
+  align-items: center;
+}
+
+.ai-path-step-head span,
+.domain-tool-card span {
+  color: #9fb0c1;
+  font-size: 0.82rem;
+  font-weight: 850;
+  text-transform: uppercase;
+}
+
+.ai-path-step-head strong {
+  color: #e8f0fb;
+  font-size: clamp(1.25rem, 2vw, 1.8rem);
+}
+
+.ai-path-step-head em {
+  padding: 7px 10px;
+  color: #aebdce;
+  background: #0b1a26;
+  border: 1px solid #294158;
+  border-radius: 8px;
+  font-style: normal;
+  font-weight: 850;
+}
+
+.ai-path-step-head em[data-state="complete"] {
+  color: #07131f;
+  background: #6bd6bf;
+  border-color: #6bd6bf;
+}
+
+.ai-path-step-head em[data-state="skipped"] {
+  color: #d8e4ef;
+  background: rgba(255, 179, 76, 0.18);
+  border-color: rgba(255, 179, 76, 0.45);
+}
+
+.ai-path-prompt {
+  display: grid;
+  gap: 10px;
+}
+
+.ai-path-prompt span {
+  color: #9fb0c1;
+  font-weight: 850;
+  text-transform: uppercase;
+}
+
+.ai-path-note {
+  max-width: 780px;
+  margin: 0;
+  color: #aebdce;
+  line-height: 1.55;
+}
+
+.ai-path-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.domain-tools-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(260px, 1fr));
+  gap: 14px;
+}
+
+.domain-tool-card {
+  display: grid;
+  gap: 10px;
+  padding: 18px;
+  background: #0b1a26;
+  border: 1px solid #294158;
+  border-radius: 8px;
+}
+
+.domain-tool-card strong {
+  color: #e8f0fb;
+  font-size: 1.1rem;
+}
+
+.domain-tool-card p {
+  margin: 0;
+  color: #aebdce;
+  line-height: 1.45;
+}
+
+.domain-tool-card div {
+  display: grid;
+  gap: 4px;
+}
+
+.domain-tool-card b {
+  color: #d8e4ef;
+  font-size: 0.82rem;
+}
+
+.domain-tool-card em {
+  color: #aebdce;
+  font-style: normal;
+  line-height: 1.4;
+}
+
 .training-hero-card,
 .training-path-card,
 .training-modules article {
@@ -1921,8 +2054,13 @@ code {
   .agents-grid,
   .training-offer,
   .training-modules,
+  .domain-tools-grid,
   .ai-lab-workbench,
   .agent-builder-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .ai-path-step-head {
     grid-template-columns: 1fr;
   }
 

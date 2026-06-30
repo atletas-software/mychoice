@@ -49,6 +49,11 @@ const agentTypeSelect = document.querySelector("#agentTypeSelect");
 const agentProblemInput = document.querySelector("#agentProblemInput");
 const buildAgentButton = document.querySelector("#buildAgentButton");
 const agentBlueprintOutput = document.querySelector("#agentBlueprintOutput");
+const aiPathSteps = document.querySelector("#aiPathSteps");
+const aiPathProgress = document.querySelector("#aiPathProgress");
+const aiPathVisionInput = document.querySelector("#aiPathVisionInput");
+const aiPathVisionStatus = document.querySelector("#aiPathVisionStatus");
+const domainToolsList = document.querySelector("#domainToolsList");
 const recordingsList = document.querySelector("#recordingsList");
 const recordingsStatus = document.querySelector("#recordingsStatus");
 const knowledgeDomainInput = document.querySelector("#knowledgeDomainInput");
@@ -111,6 +116,7 @@ resumeInput.addEventListener("change", () => {
     ? `Ready to save: ${file.name}`
     : currentUser?.resumeFileName || "Upload your resume before starting an interview.";
 });
+domainInput?.addEventListener("change", renderAiPathSteps);
 recordingsList?.addEventListener("click", (event) => {
   const target = event.target;
 
@@ -132,6 +138,8 @@ addTestTurnButton?.addEventListener("click", () => addTestInterviewTurn());
 testInterviewForm?.addEventListener("submit", saveTestInterview);
 runAiLabButton?.addEventListener("click", runAiProLab);
 buildAgentButton?.addEventListener("click", buildAgentBlueprint);
+aiPathSteps?.addEventListener("click", handleAiPathAction);
+aiPathVisionInput?.addEventListener("input", saveAiPathVision);
 
 async function initializeApp() {
   showAuth();
@@ -267,6 +275,7 @@ function showWorkspaceSection(sectionName) {
 
   if (sectionName === "training") {
     loadAiTrainingPath();
+    renderAiPathSteps();
   }
 
   if (sectionName === "interview") {
@@ -291,6 +300,7 @@ function populateProfileForm(user) {
     : "Upload your resume before starting an interview.";
   updateInterviewReadiness();
   updateTrainingOffer(user);
+  renderAiPathSteps();
 }
 
 async function saveProfile(event) {
@@ -852,6 +862,204 @@ function readFileAsTextIfSupported(file) {
     reader.addEventListener("error", () => resolve(""));
     reader.readAsText(file);
   });
+}
+
+function getAiPathStorageKey() {
+  const userKey = currentUser?.id || currentUser?.email || "preview";
+  return `myChoiceAiPath:${userKey}`;
+}
+
+function loadAiPathState() {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(getAiPathStorageKey()) || "{}");
+    return {
+      vision: parsed.vision || "",
+      steps: {
+        vision: parsed.steps?.vision || "pending",
+        tools: parsed.steps?.tools || "pending"
+      }
+    };
+  } catch {
+    return {
+      vision: "",
+      steps: {
+        vision: "pending",
+        tools: "pending"
+      }
+    };
+  }
+}
+
+function saveAiPathState(state) {
+  localStorage.setItem(getAiPathStorageKey(), JSON.stringify(state));
+}
+
+function saveAiPathVision() {
+  const state = loadAiPathState();
+  state.vision = aiPathVisionInput?.value || "";
+  saveAiPathState(state);
+
+  if (aiPathVisionStatus) {
+    aiPathVisionStatus.textContent = state.vision.trim() ? "Saved for this browser." : "";
+    aiPathVisionStatus.dataset.state = "info";
+  }
+}
+
+function handleAiPathAction(event) {
+  const actionButton = event.target instanceof HTMLElement
+    ? event.target.closest("[data-ai-step-action]")
+    : null;
+
+  if (!(actionButton instanceof HTMLElement)) {
+    return;
+  }
+
+  const stepId = actionButton.dataset.stepId || "";
+  const action = actionButton.dataset.aiStepAction || "";
+  const state = loadAiPathState();
+
+  if (stepId === "vision") {
+    state.vision = aiPathVisionInput?.value || "";
+  }
+
+  if (stepId && (action === "complete" || action === "skip")) {
+    state.steps[stepId] = action === "complete" ? "complete" : "skipped";
+    saveAiPathState(state);
+    renderAiPathSteps();
+  }
+}
+
+function renderAiPathSteps() {
+  if (!aiPathSteps) {
+    return;
+  }
+
+  const state = loadAiPathState();
+  const statuses = aiPathSteps.querySelectorAll("[data-step-status]");
+  statuses.forEach((statusNode) => {
+    const stepId = statusNode.dataset.stepStatus || "";
+    const status = state.steps[stepId] || "pending";
+    statusNode.textContent = status === "complete"
+      ? "Complete"
+      : status === "skipped"
+        ? "Skipped"
+        : "Not started";
+    statusNode.dataset.state = status;
+  });
+
+  if (aiPathVisionInput && aiPathVisionInput.value !== state.vision) {
+    aiPathVisionInput.value = state.vision;
+  }
+
+  if (aiPathProgress) {
+    const finishedSteps = Object.values(state.steps).filter((status) => status === "complete" || status === "skipped").length;
+    aiPathProgress.textContent = `${finishedSteps} of 2 steps finished`;
+  }
+
+  renderDomainToolsForPath();
+}
+
+function renderDomainToolsForPath() {
+  if (!domainToolsList) {
+    return;
+  }
+
+  const tools = getDomainToolsForPath(currentUser?.domain || domainInput?.value || "");
+
+  domainToolsList.replaceChildren(
+    ...tools.map((tool) => {
+      const card = document.createElement("article");
+      card.className = "domain-tool-card";
+      card.innerHTML = `
+        <span>${escapeHtml(tool.type)}</span>
+        <strong>${escapeHtml(tool.name)}</strong>
+        <p>${escapeHtml(tool.learn)}</p>
+        <div><b>Practice</b><em>${escapeHtml(tool.practice)}</em></div>
+        <div><b>Interview proof</b><em>${escapeHtml(tool.proof)}</em></div>
+      `;
+      return card;
+    })
+  );
+}
+
+function getDomainToolsForPath(domain) {
+  if (domain === "Financial") {
+    return [
+      {
+        type: "Model",
+        name: "ChatGPT or OpenAI API",
+        learn: "Use structured prompts to explain variance, risk, forecast movement, and executive summaries.",
+        practice: "Turn a messy finance update into a CFO-ready summary with assumptions and next actions.",
+        proof: "Show a before-and-after finance memo and explain the prompt pattern."
+      },
+      {
+        type: "Model",
+        name: "Claude",
+        learn: "Analyze long reports, policies, audit notes, investment commentary, and operating narratives.",
+        practice: "Extract risks, decisions, and open questions from a long quarterly report.",
+        proof: "Show how you compressed a complex document into decision-ready insight."
+      },
+      {
+        type: "Tool",
+        name: "Excel Copilot or Google Sheets AI",
+        learn: "Use AI to clean spreadsheets, write formulas, explain drivers, and build repeatable analysis.",
+        practice: "Create a variance analysis template with commentary for actuals versus forecast.",
+        proof: "Bring a spreadsheet plus a short explanation of how AI improved speed and quality."
+      },
+      {
+        type: "Automation",
+        name: "Power Automate, Zapier, Make, or n8n",
+        learn: "Automate recurring reporting, approvals, alerts, and data handoffs.",
+        practice: "Design a workflow that sends a variance alert and drafts the first management note.",
+        proof: "Describe the workflow, trigger, data source, and control points."
+      },
+      {
+        type: "Analytics",
+        name: "Power BI or Looker Studio",
+        learn: "Connect AI-assisted narratives to dashboards and decision meetings.",
+        practice: "Create an executive dashboard brief that explains what changed and what to do next.",
+        proof: "Show a dashboard plus the AI-generated decision summary."
+      }
+    ];
+  }
+
+  return [
+    {
+      type: "Model",
+      name: "ChatGPT or OpenAI API",
+      learn: "Use AI to triage maintenance, summarize resident issues, draft owner updates, and prototype agents.",
+      practice: "Turn a resident maintenance request into priority, likely cause, vendor route, and response draft.",
+      proof: "Show a prompt that converts raw operational text into a clear action plan."
+    },
+    {
+      type: "Model",
+      name: "Claude",
+      learn: "Review leases, standard operating procedures, vendor scopes, and long operational documents.",
+      practice: "Extract obligations, risks, missing details, and follow-up questions from a lease or vendor scope.",
+      proof: "Show an annotated document summary with decisions and risks."
+    },
+    {
+      type: "Productivity",
+      name: "Microsoft Copilot or Google Gemini",
+      learn: "Create email drafts, meeting summaries, owner packets, and team updates inside daily tools.",
+      practice: "Convert a property operations meeting into follow-ups, owners, due dates, and an executive update.",
+      proof: "Show a meeting-to-action workflow that saves time for property teams."
+    },
+    {
+      type: "Automation",
+      name: "Zapier, Make, or n8n",
+      learn: "Connect forms, email, spreadsheets, work orders, and notifications into simple automations.",
+      practice: "Design an intake flow that routes maintenance requests to the right vendor and notifies stakeholders.",
+      proof: "Explain the trigger, routing logic, exception handling, and business value."
+    },
+    {
+      type: "Operations",
+      name: "Airtable or Google Sheets",
+      learn: "Build lightweight AI-enabled trackers for work orders, vendors, renewals, and portfolio status.",
+      practice: "Create a property operations tracker with AI-generated status notes and escalation flags.",
+      proof: "Show the tracker and how it helps managers make faster decisions."
+    }
+  ];
 }
 
 function updateTrainingOffer(user) {
