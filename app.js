@@ -1041,12 +1041,14 @@ function personalizeToolsForObjective(tools, objective, recommendation) {
     const fit = cleanObjective
       ? `${tool.name} is recommended because your goal is "${cleanObjective}" and this tool supports ${focus}.`
       : `${tool.name} is recommended as a starting point for ${focus}. Add a business objective to make this more specific.`;
+    const trainingPlan = buildToolTrainingPlan(tool, cleanObjective, profileAnchor, recommendation.focus, index);
 
     return {
       ...tool,
       fit,
-      useSteps: buildToolUseSteps(tool, cleanObjective, profileAnchor, index),
-      starterPrompt: buildToolStarterPrompt(tool, cleanObjective, profileAnchor)
+      trainingPlan,
+      useSteps: trainingPlan.steps,
+      starterPrompt: trainingPlan.prompt
     };
   });
 }
@@ -1100,10 +1102,17 @@ function handleToolUseClick(event) {
     <div class="tool-use-head">
       <span>Use it</span>
       <strong>${escapeHtml(tool.name)}</strong>
+      <p>${escapeHtml(tool.trainingPlan.artifact)}</p>
     </div>
     <ol>
       ${tool.useSteps.map((step) => `<li>${escapeHtml(step)}</li>`).join("")}
     </ol>
+    <div class="tool-use-checklist">
+      <span>Quality checklist</span>
+      <ul>
+        ${tool.trainingPlan.checklist.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}
+      </ul>
+    </div>
     <label class="tool-use-prompt">
       <span>Starter prompt</span>
       <textarea rows="7" readonly>${escapeHtml(tool.starterPrompt)}</textarea>
@@ -1112,37 +1121,332 @@ function handleToolUseClick(event) {
   toolUseGuide.scrollIntoView({ behavior: "smooth", block: "nearest" });
 }
 
-function buildToolUseSteps(tool, objective, profileAnchor, index) {
-  const target = objective || "your business objective";
-  const steps = [
-    `Open ${tool.name} and start with the starter prompt below.`,
-    `Add your domain context: ${profileAnchor}.`,
-    `Ask the tool to create a first draft for: ${target}.`,
-    `Improve the output by asking for a version that is more specific, measurable, and usable by your organization.`,
-    `Save the final output as proof: ${tool.proof}`
-  ];
+function buildToolTrainingPlan(tool, objective, profileAnchor, focus, index) {
+  const target = objective || "use AI to improve my organization";
+  const domain = currentUser?.domain || "my domain";
+  const base = {
+    artifact: `Build one useful output for: ${target}.`,
+    steps: [
+      `Open ${tool.name}.`,
+      `Paste the starter prompt and replace any bracketed examples with details from your work.`,
+      `Ask for a first draft, then ask for a version with clearer business value and metrics.`,
+      `Save the result as your proof-of-skill artifact.`
+    ],
+    checklist: [
+      "It is specific to your domain.",
+      "It names the business outcome.",
+      "It includes metrics or success criteria.",
+      "It can be shown to a boss or interviewer."
+    ],
+    prompt: [
+      `My objective: ${target}`,
+      `My context: ${profileAnchor}.`,
+      `Help me use ${tool.name} to create a practical business artifact.`
+    ].join("\n")
+  };
 
-  if (index === 0) {
-    steps.splice(3, 0, "Ask it to define the audience, business problem, desired outcome, and success metrics.");
+  if (/perplexity|deep research/i.test(tool.name)) {
+    return {
+      artifact: `Build an evidence-backed target customer and market research brief for "${target}".`,
+      steps: [
+        "Create 3 likely customer segments in the domain and define the buyer, pain, urgency, budget signal, and trigger event for each.",
+        "Research competitors, alternative solutions, and language customers use when describing the problem.",
+        "Find 10 example companies, communities, search terms, or LinkedIn profiles that match the best segment.",
+        "Rank the segments by revenue potential, speed to reach, trust advantage from your background, and evidence strength.",
+        "Turn the best segment into a one-page brief with outreach angles, proof points, objections, and recommended next action."
+      ],
+      checklist: [
+        "At least 3 customer segments are compared.",
+        "Every claim includes a source or observable evidence.",
+        "The chosen segment is tied to your domain credibility.",
+        "The brief includes buying triggers and objections.",
+        "The next action is clear enough to execute this week."
+      ],
+      prompt: [
+        `I want to achieve this business objective: ${target}.`,
+        `My professional context is: ${profileAnchor}.`,
+        `Act as a market research strategist for ${domain}.`,
+        "Create an evidence-backed target customer research brief.",
+        "Include: 3 customer segments, buyer persona, pain points, buying triggers, competitor/alternative solutions, search terms, 10 example target accounts or places to find them, objections, ranking criteria, and the best first segment to pursue.",
+        "Make it practical enough that I can use it to build a sales funnel."
+      ].join("\n")
+    };
   }
 
-  return steps;
-}
+  if (/hubspot|salesforce/i.test(tool.name)) {
+    return {
+      artifact: `Build a CRM pipeline and follow-up system for "${target}".`,
+      steps: [
+        "Define the funnel stages: target identified, contacted, replied, qualified, meeting booked, proposal sent, follow-up due, won/lost.",
+        "Create the fields you need: segment, pain point, trigger, source, offer, next action, owner, due date, confidence, and revenue potential.",
+        "Use AI to draft lead scoring rules and decide what makes a lead qualified.",
+        "Create one AI-assisted follow-up template for each stage of the funnel.",
+        "Build a dashboard view that shows leads by stage, overdue follow-ups, best segment, and expected next actions."
+      ],
+      checklist: [
+        "Pipeline stages match the real sales process.",
+        "Every lead has a next action and due date.",
+        "Lead scoring is explainable.",
+        "Templates are specific to the buyer pain.",
+        "Dashboard shows where revenue can be improved."
+      ],
+      prompt: [
+        `My objective: ${target}.`,
+        `My context: ${profileAnchor}.`,
+        `Act as a CRM architect and sales operations coach for ${domain}.`,
+        "Design a simple CRM pipeline I can build in HubSpot or Salesforce.",
+        "Give me: stages, required fields, lead scoring rules, follow-up templates for each stage, dashboard views, and the first 10 records I should create as examples.",
+        "Make it useful for proving I can use AI to improve sales execution."
+      ].join("\n")
+    };
+  }
 
-function buildToolStarterPrompt(tool, objective, profileAnchor) {
-  return [
-    `Act as an AI coach for my domain.`,
-    `My objective: ${objective || "I want to use AI to improve my organization."}`,
-    `My context: ${profileAnchor}.`,
-    `Tool I am learning: ${tool.name}.`,
-    `Help me use this tool for my objective.`,
-    `Give me:`,
-    `1. the exact first task I should do,`,
-    `2. the inputs I need to collect,`,
-    `3. a draft output I can create,`,
-    `4. how to measure whether it helps the business,`,
-    `5. what I should show my boss or interviewer as proof.`
-  ].join("\n");
+  if (/zapier|make|n8n/i.test(tool.name)) {
+    return {
+      artifact: `Build an end-to-end automation blueprint for the funnel behind "${target}".`,
+      steps: [
+        "Choose the trigger: new form submission, new spreadsheet row, new CRM lead, inbound email, or booked meeting.",
+        "Define the data that must move through the workflow: name, company, segment, pain, source, urgency, owner, and next action.",
+        "Map each automation step: capture lead, enrich/classify, create CRM record, draft reply, notify owner, schedule follow-up, log status.",
+        "Add exception handling: missing email, bad fit, duplicate lead, high-priority lead, no response after 3 days.",
+        "Write the human review point so AI drafts work but a person approves important messages."
+      ],
+      checklist: [
+        "Workflow has a clear trigger and final outcome.",
+        "Each step has input, action, output, and owner.",
+        "There is human review for risky communication.",
+        "Errors and duplicates are handled.",
+        "Business value is stated in time saved, faster response, or more booked meetings."
+      ],
+      prompt: [
+        `My objective: ${target}.`,
+        `My context: ${profileAnchor}.`,
+        `Act as a workflow automation architect for ${domain}.`,
+        "Design a Zapier/Make/n8n automation for an end-to-end marketing or sales funnel.",
+        "Return: trigger, apps involved, data fields, step-by-step workflow, AI prompt used in each AI step, exception handling, human approval points, and metrics to prove business value."
+      ].join("\n")
+    };
+  }
+
+  if (/assistant|custom gpt/i.test(tool.name)) {
+    return {
+      artifact: `Design a reusable AI assistant for "${target}".`,
+      steps: [
+        "Define the assistant's job in one sentence: user, task, input, output, and decision boundary.",
+        "Write system instructions that include tone, domain rules, required fields, and what the assistant must never do.",
+        "Create 3 realistic examples from your domain: easy case, complex case, and exception case.",
+        "Test the assistant against each example and improve the instructions until outputs are consistent.",
+        "Document where a human must review the output before it is used in the business."
+      ],
+      checklist: [
+        "Assistant has a narrow business job.",
+        "Inputs and outputs are structured.",
+        "Examples reflect real domain situations.",
+        "Human review points are clear.",
+        "The assistant saves time or improves consistency."
+      ],
+      prompt: [
+        `My objective: ${target}.`,
+        `My context: ${profileAnchor}.`,
+        `Act as an AI agent designer for ${domain}.`,
+        "Design a reusable assistant for this objective.",
+        "Return: assistant purpose, user inputs, output format, system instructions, 3 test cases, failure modes, human review rules, and success metrics."
+      ].join("\n")
+    };
+  }
+
+  if (/mailchimp|brevo|marketing hub/i.test(tool.name)) {
+    return {
+      artifact: `Build a segmented nurture campaign for "${target}".`,
+      steps: [
+        "Pick one target segment from your research and define the pain they care about most.",
+        "Create a 3-email sequence: problem awareness, solution/business case, proof/meeting request.",
+        "Use AI to personalize each email by role, trigger event, and objection.",
+        "Define segmentation rules, send timing, subject lines, and call-to-action for each message.",
+        "Create success metrics: open rate, reply rate, meeting rate, qualified lead rate, and next test."
+      ],
+      checklist: [
+        "Each email has one clear purpose.",
+        "Message is specific to the segment and domain.",
+        "Subject lines are testable.",
+        "CTA is simple and low-friction.",
+        "Metrics connect to business outcomes, not just activity."
+      ],
+      prompt: [
+        `My objective: ${target}.`,
+        `My context: ${profileAnchor}.`,
+        `Act as an email marketing strategist for ${domain}.`,
+        "Create a 3-email nurture sequence for one target segment.",
+        "Include: segment definition, pain point, offer, subject lines, email body, personalization fields, send timing, CTA, success metrics, and A/B test ideas."
+      ].join("\n")
+    };
+  }
+
+  if (/excel|sheets/i.test(tool.name)) {
+    return {
+      artifact: `Build a spreadsheet-based analysis or operating tracker for "${target}".`,
+      steps: [
+        "Define the business question the sheet must answer and the decision it supports.",
+        "Create columns for input data, status, owner, due date, metric, AI summary, risk, and recommended action.",
+        "Use AI to generate formulas, clean sample rows, and write plain-English explanations of the results.",
+        "Add a summary section with 3 insights, 3 risks, and 3 recommended next actions.",
+        "Save one before/after example showing how AI made the spreadsheet more useful."
+      ],
+      checklist: [
+        "Spreadsheet answers a clear decision question.",
+        "Important fields are structured.",
+        "AI output is reviewable, not hidden.",
+        "Insights lead to actions.",
+        "A manager can understand the summary quickly."
+      ],
+      prompt: [
+        `My objective: ${target}.`,
+        `My context: ${profileAnchor}.`,
+        `Act as a spreadsheet and business analysis coach for ${domain}.`,
+        "Design a spreadsheet or tracker that helps me reach this objective.",
+        "Return: table columns, sample rows, formulas, AI-generated summary fields, dashboard metrics, and the management summary I should produce."
+      ].join("\n")
+    };
+  }
+
+  if (/power bi|looker/i.test(tool.name)) {
+    return {
+      artifact: `Create a dashboard narrative for "${target}".`,
+      steps: [
+        "Choose 5 metrics that show whether the objective is working.",
+        "Define the data source and refresh rhythm for each metric.",
+        "Sketch dashboard sections: outcome metrics, activity metrics, bottlenecks, segment view, and next actions.",
+        "Use AI to write the executive narrative that explains what changed, why it matters, and what to do next.",
+        "Create a one-slide explanation of how the dashboard improves decisions."
+      ],
+      checklist: [
+        "Metrics connect to the business goal.",
+        "Dashboard shows decisions, not just data.",
+        "Segments or categories are meaningful.",
+        "Narrative explains so-what and now-what.",
+        "Next actions are visible."
+      ],
+      prompt: [
+        `My objective: ${target}.`,
+        `My context: ${profileAnchor}.`,
+        `Act as a BI dashboard strategist for ${domain}.`,
+        "Design a dashboard for this objective.",
+        "Return: key metrics, data fields, dashboard layout, filters, executive narrative, decision questions, and actions leaders should take from the dashboard."
+      ].join("\n")
+    };
+  }
+
+  if (/airtable/i.test(tool.name)) {
+    return {
+      artifact: `Build a lightweight operating system for "${target}".`,
+      steps: [
+        "Define the records the business needs to track: lead, property, task, vendor, client, report, or opportunity.",
+        "Create fields for owner, status, priority, next action, due date, source, AI summary, and business impact.",
+        "Create views for today, overdue, high value, waiting on someone, and completed proof.",
+        "Use AI to draft status updates and summarize patterns across records.",
+        "Save screenshots of the base, views, and one AI-generated summary as portfolio proof."
+      ],
+      checklist: [
+        "Records match the real workflow.",
+        "Views help someone act quickly.",
+        "AI summaries reduce manual reporting.",
+        "There is a clear owner and next action.",
+        "The setup could be reused by a team."
+      ],
+      prompt: [
+        `My objective: ${target}.`,
+        `My context: ${profileAnchor}.`,
+        `Act as an Airtable workflow designer for ${domain}.`,
+        "Design a lightweight Airtable base.",
+        "Return: tables, fields, views, automations, AI summary fields, example records, and how this base proves business value."
+      ].join("\n")
+    };
+  }
+
+  if (/copilot|gemini/i.test(tool.name)) {
+    return {
+      artifact: `Create a productivity workflow for "${target}" inside daily work tools.`,
+      steps: [
+        "Pick the daily workflow: email, meeting notes, document drafting, stakeholder update, or action tracking.",
+        "Create a prompt pattern for turning raw notes into decisions, actions, owner, due date, and executive summary.",
+        "Use the tool to generate one real draft and then ask it to shorten, clarify, and add business impact.",
+        "Create a reusable template for future updates.",
+        "Save the original notes and improved output as proof."
+      ],
+      checklist: [
+        "Workflow starts from real work material.",
+        "Output is concise and decision-ready.",
+        "Owners and next actions are clear.",
+        "Template can be reused.",
+        "The value is time saved or better communication."
+      ],
+      prompt: [
+        `My objective: ${target}.`,
+        `My context: ${profileAnchor}.`,
+        `Act as a productivity coach for ${domain}.`,
+        "Create a reusable Copilot/Gemini workflow.",
+        "Return: input template, prompt, output format, example executive update, action-item format, and quality checklist."
+      ].join("\n")
+    };
+  }
+
+  if (/canva|designer/i.test(tool.name)) {
+    return {
+      artifact: `Create a one-page visual business case for "${target}".`,
+      steps: [
+        "Turn the objective into a simple story: business problem, AI-enabled solution, workflow, expected impact, and proof.",
+        "Create a one-page layout with headline, before/after, 3 benefits, workflow diagram, and success metrics.",
+        "Use AI to generate concise copy for each section and remove generic language.",
+        "Create one version for your boss and one version for an interview portfolio.",
+        "Export it as PDF and keep it with your CRM/workflow/research artifacts."
+      ],
+      checklist: [
+        "The page can be understood in 60 seconds.",
+        "It shows business impact, not just tool names.",
+        "It includes a before/after workflow.",
+        "It has measurable outcomes.",
+        "It looks like a professional portfolio artifact."
+      ],
+      prompt: [
+        `My objective: ${target}.`,
+        `My context: ${profileAnchor}.`,
+        `Act as a business presentation designer for ${domain}.`,
+        "Create copy for a one-page visual business case.",
+        "Structure it as: headline, business problem, AI solution, workflow, expected impact, metrics, proof artifact, and call-to-action.",
+        "Make the language executive-ready and specific."
+      ].join("\n")
+    };
+  }
+
+  if (/chatgpt|claude|gemini/i.test(tool.name)) {
+    return {
+      artifact: `Build the strategy and message system for "${target}".`,
+      steps: [
+        "Define the end-to-end outcome: who you help, what problem you solve, why now, and what success looks like.",
+        "Create a funnel map with stages, user intent, message, asset, tool, and metric for each stage.",
+        "Use your LinkedIn/resume context to write credibility proof: why you are credible in this domain.",
+        "Generate 3 messaging angles and test which one is most specific to the buyer pain.",
+        "Create the first reusable prompt template you can use weekly for this workflow."
+      ],
+      checklist: [
+        "Strategy names a specific buyer or stakeholder.",
+        "Funnel stages have assets and metrics.",
+        "Messaging uses your domain credibility.",
+        "Prompts are reusable.",
+        "The output can guide the other tools in this path."
+      ],
+      prompt: [
+        `My objective: ${target}.`,
+        `My context: ${profileAnchor}.`,
+        `Act as my AI strategy coach for ${domain}.`,
+        "Build an end-to-end plan that helps me reach this goal.",
+        "Return: target audience, pain points, offer, funnel stages, recommended tools, messages by stage, metrics, risks, and the first 7-day action plan.",
+        "Use my background as credibility and make this specific enough to show to my boss or interviewer."
+      ].join("\n")
+    };
+  }
+
+  return base;
 }
 
 function getAiPathRecommendation(domain, objective) {
