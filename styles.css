@@ -1184,6 +1184,38 @@ code {
   line-height: 1.55;
 }
 
+.ai-path-objective {
+  display: grid;
+  gap: 8px;
+  padding: 18px;
+  background: rgba(85, 158, 174, 0.14);
+  border: 1px solid rgba(105, 183, 199, 0.36);
+  border-radius: 8px;
+}
+
+.ai-path-objective:empty {
+  display: none;
+}
+
+.ai-path-objective span {
+  color: #9fb0c1;
+  font-size: 0.82rem;
+  font-weight: 850;
+  text-transform: uppercase;
+}
+
+.ai-path-objective strong {
+  color: #e8f0fb;
+  font-size: 1.2rem;
+}
+
+.ai-path-objective p {
+  max-width: 860px;
+  margin: 0;
+  color: #c5d4e3;
+  line-height: 1.5;
+}
+
 .ai-path-actions {
   display: flex;
   flex-wrap: wrap;

@@ -53,6 +53,7 @@ const aiPathSteps = document.querySelector("#aiPathSteps");
 const aiPathProgress = document.querySelector("#aiPathProgress");
 const aiPathVisionInput = document.querySelector("#aiPathVisionInput");
 const aiPathVisionStatus = document.querySelector("#aiPathVisionStatus");
+const aiPathObjectiveSummary = document.querySelector("#aiPathObjectiveSummary");
 const domainToolsList = document.querySelector("#domainToolsList");
 const recordingsList = document.querySelector("#recordingsList");
 const recordingsStatus = document.querySelector("#recordingsStatus");
@@ -903,6 +904,8 @@ function saveAiPathVision() {
     aiPathVisionStatus.textContent = state.vision.trim() ? "Saved for this browser." : "";
     aiPathVisionStatus.dataset.state = "info";
   }
+
+  renderDomainToolsForPath();
 }
 
 function handleAiPathAction(event) {
@@ -964,7 +967,19 @@ function renderDomainToolsForPath() {
     return;
   }
 
-  const tools = getDomainToolsForPath(currentUser?.domain || domainInput?.value || "");
+  const state = loadAiPathState();
+  const domain = currentUser?.domain || domainInput?.value || "";
+  const objective = state.vision || "";
+  const recommendation = getAiPathRecommendation(domain, objective);
+  const tools = getDomainToolsForPath(domain, recommendation.focus);
+
+  if (aiPathObjectiveSummary) {
+    aiPathObjectiveSummary.innerHTML = `
+      <span>Recommended focus</span>
+      <strong>${escapeHtml(recommendation.title)}</strong>
+      <p>${escapeHtml(recommendation.summary)}</p>
+    `;
+  }
 
   domainToolsList.replaceChildren(
     ...tools.map((tool) => {
@@ -982,9 +997,60 @@ function renderDomainToolsForPath() {
   );
 }
 
-function getDomainToolsForPath(domain) {
-  if (domain === "Financial") {
-    return [
+function getAiPathRecommendation(domain, objective) {
+  const text = String(objective || "").toLowerCase();
+  const has = (words) => words.some((word) => text.includes(word));
+  const domainName = domain || "your domain";
+
+  if (!text.trim()) {
+    return {
+      focus: "foundation",
+      title: `AI foundation for ${domainName}`,
+      summary: "Write your business objective in Step 1, and this path will prioritize the tools that fit it."
+    };
+  }
+
+  if (has(["client", "lead", "sales", "revenue", "customer", "prospect", "marketing", "growth"])) {
+    return {
+      focus: "growth",
+      title: "Client growth and revenue enablement",
+      summary: "Your objective is about winning more clients. Start with tools for targeting, messaging, outreach, proposals, and simple growth automations."
+    };
+  }
+
+  if (has(["report", "dashboard", "forecast", "variance", "kpi", "analysis", "analytics", "insight"])) {
+    return {
+      focus: "analytics",
+      title: "AI analytics and executive reporting",
+      summary: "Your objective is about turning business data into clearer decisions. Start with tools for analysis, dashboard narratives, and decision-ready summaries."
+    };
+  }
+
+  if (has(["automate", "workflow", "process", "manual", "operation", "efficiency", "save time"])) {
+    return {
+      focus: "automation",
+      title: "Workflow automation and operational leverage",
+      summary: "Your objective is about removing manual work. Start with automation tools, structured prompts, and lightweight agents for repeatable business workflows."
+    };
+  }
+
+  if (has(["tenant", "resident", "maintenance", "vendor", "property", "lease", "renewal"])) {
+    return {
+      focus: "operations",
+      title: "Domain operations improvement",
+      summary: "Your objective is operational. Start with tools that triage requests, summarize documents, route work, and improve communication quality."
+    };
+  }
+
+  return {
+    focus: "foundation",
+    title: `AI business impact for ${domainName}`,
+    summary: "This path starts with practical tools you can use to explain, prototype, and prove AI value for the business objective you described."
+  };
+}
+
+function getDomainToolsForPath(domain, focus = "foundation") {
+  const financialTools = [
       {
         type: "Model",
         name: "ChatGPT or OpenAI API",
@@ -1021,9 +1087,8 @@ function getDomainToolsForPath(domain) {
         proof: "Show a dashboard plus the AI-generated decision summary."
       }
     ];
-  }
 
-  return [
+  const propertyTools = [
     {
       type: "Model",
       name: "ChatGPT or OpenAI API",
@@ -1060,6 +1125,120 @@ function getDomainToolsForPath(domain) {
       proof: "Show the tracker and how it helps managers make faster decisions."
     }
   ];
+
+  const growthTools = [
+    {
+      type: "Research",
+      name: "ChatGPT Deep Research or Perplexity",
+      learn: "Research target customer segments, competitors, buying triggers, and outreach angles.",
+      practice: "Create a ranked list of target client types and the problems your organization can solve for each.",
+      proof: "Bring a one-page target customer brief with pain points, messages, and proof points."
+    },
+    {
+      type: "Messaging",
+      name: "ChatGPT, Claude, or Gemini",
+      learn: "Turn your domain expertise into client-facing messages, proposals, follow-ups, and objection handling.",
+      practice: "Draft three outreach messages for different client types and one proposal outline.",
+      proof: "Show the message variants and explain why each fits the buyer."
+    },
+    {
+      type: "CRM",
+      name: "HubSpot AI or Salesforce Einstein",
+      learn: "Use AI to organize leads, score opportunities, summarize calls, and suggest next actions.",
+      practice: "Build a simple pipeline with lead source, buyer need, next action, and AI-written follow-up.",
+      proof: "Show how AI improves follow-up speed and consistency."
+    },
+    {
+      type: "Content",
+      name: "Canva AI or Microsoft Designer",
+      learn: "Create simple sales assets, one-pagers, social posts, and visuals that explain your offer.",
+      practice: "Create a one-page business case for your boss showing how AI can bring more clients.",
+      proof: "Use the asset as your portfolio example in interviews."
+    },
+    {
+      type: "Automation",
+      name: "Zapier, Make, or n8n",
+      learn: "Automate lead capture, email follow-up, calendar routing, and activity tracking.",
+      practice: "Design a lead workflow from form submission to CRM entry to follow-up draft.",
+      proof: "Explain the workflow and how it reduces missed opportunities."
+    }
+  ];
+
+  const automationTools = [
+    {
+      type: "Automation",
+      name: "Zapier, Make, or n8n",
+      learn: "Build no-code workflows that connect forms, email, spreadsheets, databases, and notifications.",
+      practice: "Map one manual process and design the trigger, actions, exceptions, and owner alerts.",
+      proof: "Show the automation map and expected time savings."
+    },
+    {
+      type: "Agent",
+      name: "OpenAI Assistants or custom GPTs",
+      learn: "Create an assistant that uses instructions, examples, and domain context to handle repeatable tasks.",
+      practice: "Write instructions for an assistant that drafts first-pass responses or summaries.",
+      proof: "Show the assistant prompt, sample input, and sample output."
+    },
+    {
+      type: "Data",
+      name: "Airtable or Google Sheets",
+      learn: "Use simple databases as the control center for AI workflows.",
+      practice: "Create a tracker with status, owner, next action, and AI-generated summary fields.",
+      proof: "Show how the tracker makes work visible and repeatable."
+    },
+    {
+      type: "Productivity",
+      name: "Microsoft Copilot or Google Gemini",
+      learn: "Automate everyday documents, email summaries, action items, and meeting follow-ups.",
+      practice: "Turn a meeting transcript into decisions, action items, and stakeholder updates.",
+      proof: "Show the before-and-after meeting workflow."
+    }
+  ];
+
+  const analyticsTools = [
+    {
+      type: "Analysis",
+      name: "ChatGPT Advanced Data Analysis",
+      learn: "Use AI to inspect spreadsheets, find patterns, explain drivers, and write decision summaries.",
+      practice: "Analyze a small sample report and produce three insights plus recommended actions.",
+      proof: "Show the analysis prompt, chart, and executive summary."
+    },
+    {
+      type: "Spreadsheet",
+      name: "Excel Copilot or Google Sheets AI",
+      learn: "Generate formulas, clean data, summarize tables, and create analysis narratives.",
+      practice: "Build a KPI table with AI-generated commentary for each metric.",
+      proof: "Show the spreadsheet and explain how AI improved the workflow."
+    },
+    {
+      type: "Dashboard",
+      name: "Power BI or Looker Studio",
+      learn: "Connect metrics to visual dashboards and concise business narratives.",
+      practice: "Create a dashboard brief that explains what changed, why it matters, and what to do.",
+      proof: "Show a dashboard screenshot plus the decision narrative."
+    },
+    {
+      type: "Document",
+      name: "Claude",
+      learn: "Summarize long reports and extract risks, open questions, and recommendations.",
+      practice: "Turn a long business document into an executive memo.",
+      proof: "Show the memo structure and the source evidence used."
+    }
+  ];
+
+  if (focus === "growth") {
+    return growthTools;
+  }
+
+  if (focus === "automation") {
+    return automationTools;
+  }
+
+  if (focus === "analytics") {
+    return analyticsTools;
+  }
+
+  return domain === "Financial" ? financialTools : propertyTools;
 }
 
 function updateTrainingOffer(user) {
