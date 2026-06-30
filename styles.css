@@ -1226,6 +1226,32 @@ code {
   line-height: 1.5;
 }
 
+.ai-path-context {
+  display: grid;
+  gap: 6px;
+  padding: 14px 16px;
+  background: rgba(7, 19, 31, 0.48);
+  border: 1px solid #294158;
+  border-radius: 8px;
+}
+
+.ai-path-context[hidden] {
+  display: none;
+}
+
+.ai-path-context span {
+  color: #9fb0c1;
+  font-size: 0.78rem;
+  font-weight: 850;
+  text-transform: uppercase;
+}
+
+.ai-path-context p {
+  margin: 0;
+  color: #c5d4e3;
+  line-height: 1.45;
+}
+
 .ai-path-actions {
   display: flex;
   flex-wrap: wrap;
@@ -1241,6 +1267,7 @@ code {
 .domain-tool-card {
   display: grid;
   gap: 10px;
+  align-content: start;
   padding: 18px;
   background: #0b1a26;
   border: 1px solid #294158;
@@ -1258,6 +1285,15 @@ code {
   line-height: 1.45;
 }
 
+.domain-tool-card .tool-fit {
+  padding: 10px 12px;
+  color: #d8e4ef;
+  background: rgba(85, 158, 174, 0.12);
+  border: 1px solid rgba(105, 183, 199, 0.28);
+  border-radius: 8px;
+  font-size: 0.92rem;
+}
+
 .domain-tool-card div {
   display: grid;
   gap: 4px;
@@ -1272,6 +1308,56 @@ code {
   color: #aebdce;
   font-style: normal;
   line-height: 1.4;
+}
+
+.tool-use-button {
+  justify-self: start;
+  margin-top: 4px;
+}
+
+.tool-use-guide {
+  display: grid;
+  gap: 16px;
+  padding: 22px;
+  background: #07131f;
+  border: 1px solid #6bd6bf;
+  border-radius: 8px;
+}
+
+.tool-use-guide[hidden] {
+  display: none;
+}
+
+.tool-use-head {
+  display: grid;
+  gap: 4px;
+}
+
+.tool-use-head span,
+.tool-use-prompt span {
+  color: #9fb0c1;
+  font-size: 0.82rem;
+  font-weight: 850;
+  text-transform: uppercase;
+}
+
+.tool-use-head strong {
+  color: #e8f0fb;
+  font-size: 1.35rem;
+}
+
+.tool-use-guide ol {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding-left: 22px;
+  color: #d8e4ef;
+  line-height: 1.5;
+}
+
+.tool-use-prompt {
+  display: grid;
+  gap: 8px;
 }
 
 .training-hero-card,

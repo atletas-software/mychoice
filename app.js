@@ -54,7 +54,9 @@ const aiPathProgress = document.querySelector("#aiPathProgress");
 const aiPathVisionInput = document.querySelector("#aiPathVisionInput");
 const aiPathVisionStatus = document.querySelector("#aiPathVisionStatus");
 const aiPathObjectiveSummary = document.querySelector("#aiPathObjectiveSummary");
+const aiPathContextSummary = document.querySelector("#aiPathContextSummary");
 const domainToolsList = document.querySelector("#domainToolsList");
+const toolUseGuide = document.querySelector("#toolUseGuide");
 const recordingsList = document.querySelector("#recordingsList");
 const recordingsStatus = document.querySelector("#recordingsStatus");
 const knowledgeDomainInput = document.querySelector("#knowledgeDomainInput");
@@ -74,6 +76,8 @@ let dailyCall = null;
 let currentUser = null;
 let selectedInterviewId = "";
 let recordingsRefreshTimer = null;
+let latestAiTrainingPath = null;
+let latestAiPathTools = [];
 
 initializeApp();
 addTestInterviewTurn();
@@ -141,6 +145,7 @@ runAiLabButton?.addEventListener("click", runAiProLab);
 buildAgentButton?.addEventListener("click", buildAgentBlueprint);
 aiPathSteps?.addEventListener("click", handleAiPathAction);
 aiPathVisionInput?.addEventListener("input", saveAiPathVision);
+domainToolsList?.addEventListener("click", handleToolUseClick);
 
 async function initializeApp() {
   showAuth();
@@ -897,15 +902,25 @@ function saveAiPathState(state) {
 
 function saveAiPathVision() {
   const state = loadAiPathState();
-  state.vision = aiPathVisionInput?.value || "";
+  const nextVision = aiPathVisionInput?.value || "";
+  const changed = state.vision !== nextVision;
+  state.vision = nextVision;
+
+  if (changed) {
+    state.steps.vision = "pending";
+    state.steps.tools = "pending";
+  }
+
   saveAiPathState(state);
 
   if (aiPathVisionStatus) {
-    aiPathVisionStatus.textContent = state.vision.trim() ? "Saved for this browser." : "";
+    aiPathVisionStatus.textContent = state.vision.trim()
+      ? "Saved. Complete this step to lock in the current objective."
+      : "";
     aiPathVisionStatus.dataset.state = "info";
   }
 
-  renderDomainToolsForPath();
+  renderAiPathSteps();
 }
 
 function handleAiPathAction(event) {
@@ -931,6 +946,11 @@ function handleAiPathAction(event) {
     renderAiPathSteps();
 
     if (stepId === "vision" && action === "complete") {
+      if (aiPathVisionStatus) {
+        aiPathVisionStatus.textContent = "Training tools generated below.";
+        aiPathVisionStatus.dataset.state = "info";
+      }
+
       setTimeout(() => {
         aiPathSteps?.querySelector("[data-ai-step='tools']")?.scrollIntoView({
           behavior: "smooth",
@@ -980,7 +1000,8 @@ function renderDomainToolsForPath() {
   const domain = currentUser?.domain || domainInput?.value || "";
   const objective = state.vision || "";
   const recommendation = getAiPathRecommendation(domain, objective);
-  const tools = getDomainToolsForPath(domain, recommendation.focus);
+  const tools = personalizeToolsForObjective(getDomainToolsForPath(domain, recommendation.focus), objective, recommendation);
+  latestAiPathTools = tools;
 
   if (aiPathObjectiveSummary) {
     aiPathObjectiveSummary.innerHTML = `
@@ -991,20 +1012,137 @@ function renderDomainToolsForPath() {
     `;
   }
 
+  renderAiPathContextSummary(objective);
+
   domainToolsList.replaceChildren(
-    ...tools.map((tool) => {
+    ...tools.map((tool, index) => {
       const card = document.createElement("article");
       card.className = "domain-tool-card";
       card.innerHTML = `
         <span>${escapeHtml(tool.type)}</span>
         <strong>${escapeHtml(tool.name)}</strong>
+        <p class="tool-fit">${escapeHtml(tool.fit)}</p>
         <p>${escapeHtml(tool.learn)}</p>
         <div><b>Practice</b><em>${escapeHtml(tool.practice)}</em></div>
         <div><b>Interview proof</b><em>${escapeHtml(tool.proof)}</em></div>
+        <button class="primary-action compact-action tool-use-button" type="button" data-tool-index="${index}">Use it</button>
       `;
       return card;
     })
   );
+}
+
+function personalizeToolsForObjective(tools, objective, recommendation) {
+  const cleanObjective = objective.trim();
+  const focus = recommendation.title.toLowerCase();
+  const profileAnchor = buildClientProfileAnchor(currentUser);
+
+  return tools.map((tool, index) => {
+    const fit = cleanObjective
+      ? `${tool.name} is recommended because your goal is "${cleanObjective}" and this tool supports ${focus}.`
+      : `${tool.name} is recommended as a starting point for ${focus}. Add a business objective to make this more specific.`;
+
+    return {
+      ...tool,
+      fit,
+      useSteps: buildToolUseSteps(tool, cleanObjective, profileAnchor, index),
+      starterPrompt: buildToolStarterPrompt(tool, cleanObjective, profileAnchor)
+    };
+  });
+}
+
+function renderAiPathContextSummary(objective) {
+  if (!aiPathContextSummary) {
+    return;
+  }
+
+  const sources = [];
+  if (currentUser?.domain) sources.push(`Domain: ${currentUser.domain}`);
+  if (currentUser?.linkedIn) sources.push("LinkedIn saved");
+  if (currentUser?.resumeFileName) sources.push(`Resume: ${currentUser.resumeFileName}`);
+  if (currentUser?.personalContext) sources.push("Profile notes saved");
+  if (currentUser?.futureDirection) sources.push("Future direction saved");
+
+  const pathSources = latestAiTrainingPath?.contextSources || {};
+  if (pathSources.interviewTranscriptTurns) {
+    sources.push(`${pathSources.interviewTranscriptTurns} interview transcript turns`);
+  }
+
+  if (!sources.length && !objective.trim()) {
+    aiPathContextSummary.hidden = true;
+    aiPathContextSummary.replaceChildren();
+    return;
+  }
+
+  aiPathContextSummary.hidden = false;
+  aiPathContextSummary.innerHTML = `
+    <span>Context used</span>
+    <p>${escapeHtml(sources.length ? sources.join(" · ") : "Only the business objective is available right now. Add LinkedIn, resume, profile notes, and interviews for stronger recommendations.")}</p>
+  `;
+}
+
+function handleToolUseClick(event) {
+  const button = event.target instanceof HTMLElement
+    ? event.target.closest("[data-tool-index]")
+    : null;
+
+  if (!(button instanceof HTMLElement)) {
+    return;
+  }
+
+  const tool = latestAiPathTools[Number(button.dataset.toolIndex || -1)];
+  if (!tool || !toolUseGuide) {
+    return;
+  }
+
+  toolUseGuide.hidden = false;
+  toolUseGuide.innerHTML = `
+    <div class="tool-use-head">
+      <span>Use it</span>
+      <strong>${escapeHtml(tool.name)}</strong>
+    </div>
+    <ol>
+      ${tool.useSteps.map((step) => `<li>${escapeHtml(step)}</li>`).join("")}
+    </ol>
+    <label class="tool-use-prompt">
+      <span>Starter prompt</span>
+      <textarea rows="7" readonly>${escapeHtml(tool.starterPrompt)}</textarea>
+    </label>
+  `;
+  toolUseGuide.scrollIntoView({ behavior: "smooth", block: "nearest" });
+}
+
+function buildToolUseSteps(tool, objective, profileAnchor, index) {
+  const target = objective || "your business objective";
+  const steps = [
+    `Open ${tool.name} and start with the starter prompt below.`,
+    `Add your domain context: ${profileAnchor}.`,
+    `Ask the tool to create a first draft for: ${target}.`,
+    `Improve the output by asking for a version that is more specific, measurable, and usable by your organization.`,
+    `Save the final output as proof: ${tool.proof}`
+  ];
+
+  if (index === 0) {
+    steps.splice(3, 0, "Ask it to define the audience, business problem, desired outcome, and success metrics.");
+  }
+
+  return steps;
+}
+
+function buildToolStarterPrompt(tool, objective, profileAnchor) {
+  return [
+    `Act as an AI coach for my domain.`,
+    `My objective: ${objective || "I want to use AI to improve my organization."}`,
+    `My context: ${profileAnchor}.`,
+    `Tool I am learning: ${tool.name}.`,
+    `Help me use this tool for my objective.`,
+    `Give me:`,
+    `1. the exact first task I should do,`,
+    `2. the inputs I need to collect,`,
+    `3. a draft output I can create,`,
+    `4. how to measure whether it helps the business,`,
+    `5. what I should show my boss or interviewer as proof.`
+  ].join("\n");
 }
 
 function getAiPathRecommendation(domain, objective) {
@@ -1021,7 +1159,7 @@ function getAiPathRecommendation(domain, objective) {
   }
 
   if (
-    has(["automate", "automation", "workflow", "campaign", "nurture", "follow-up", "follow up"]) &&
+    has(["automate", "automation", "workflow", "campaign", "nurture", "follow-up", "follow up", "funnel", "end to end"]) &&
     has(["marketing", "client", "lead", "sales", "customer", "prospect", "revenue"])
   ) {
     return {
@@ -1342,19 +1480,21 @@ function updateTrainingOffer(user) {
 }
 
 async function loadAiTrainingPath() {
-  if (!aiPathRoleTitle) {
-    return;
-  }
-
   if (!currentUser) {
-    renderAiTrainingPath(null);
+    latestAiTrainingPath = null;
+    if (aiPathRoleTitle) {
+      renderAiTrainingPath(null);
+    }
+    renderAiPathSteps();
     return;
   }
 
-  aiPathRoleTitle.textContent = "Generating your AI path...";
-  aiPathOverview.textContent = "Reading your saved LinkedIn, resume, profile context, and interview records.";
-  aiPathSkills.replaceChildren();
-  aiPathActions.replaceChildren();
+  if (aiPathRoleTitle) {
+    aiPathRoleTitle.textContent = "Generating your AI path...";
+    aiPathOverview.textContent = "Reading your saved LinkedIn, resume, profile context, and interview records.";
+    aiPathSkills.replaceChildren();
+    aiPathActions.replaceChildren();
+  }
 
   try {
     const response = await fetch("/api/ai-training/path");
@@ -1364,11 +1504,19 @@ async function loadAiTrainingPath() {
       throw new Error(data.error || "Unable to generate AI path.");
     }
 
-    renderAiTrainingPath(data.path);
+    latestAiTrainingPath = data.path || null;
+    if (aiPathRoleTitle) {
+      renderAiTrainingPath(data.path);
+    }
+    renderAiPathSteps();
   } catch (error) {
-    aiPathRoleTitle.textContent = "AI path needs profile context";
-    aiPathOverview.textContent =
-      error instanceof Error ? error.message : "Complete your profile and try again.";
+    latestAiTrainingPath = null;
+    if (aiPathRoleTitle) {
+      aiPathRoleTitle.textContent = "AI path needs profile context";
+      aiPathOverview.textContent =
+        error instanceof Error ? error.message : "Complete your profile and try again.";
+    }
+    renderAiPathSteps();
   }
 }
 
